@@ -11,7 +11,7 @@ Providers:
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 from dotenv import load_dotenv, find_dotenv
 
 # Busca .env subiendo desde el directorio actual (cubre project root)
@@ -88,6 +88,48 @@ Reglas:
 - Para unidad_medida usa: Unidad, Kg, Gramos, Litro, Porción, según el tipo de producto
 - Siempre extrae al menos nombre y rubro. Ciudad y departamento son opcionales.
 - Responde SOLO usando la función extraer_datos_plan."""
+
+# Schema para inferir nombres de variables estadísticas desde preguntas de encuesta
+VARIABLE_SCHEMA = {
+    "name": "inferir_variables",
+    "description": "Infiere nombres cortos de variables estadísticas desde textos de preguntas de encuesta.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "variables": {
+                "type": "array",
+                "description": "Una entrada por pregunta, en el mismo orden recibido",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "numero": {
+                            "type": "integer",
+                            "description": "Número de la pregunta"
+                        },
+                        "variable": {
+                            "type": "string",
+                            "description": "Nombre corto de la variable (1-3 palabras en español)"
+                        }
+                    },
+                    "required": ["numero", "variable"]
+                }
+            }
+        },
+        "required": ["variables"]
+    }
+}
+
+VARIABLE_SYSTEM_PROMPT = """Eres un experto en investigación de mercado y estadística descriptiva.
+Dado el texto de preguntas de una encuesta, infiere el nombre corto de la variable estadística que representa cada pregunta.
+
+Reglas:
+- 1 a 3 palabras máximo
+- Sustantivos o frases nominales en español
+- Sin signos de interrogación ni artículos innecesarios
+- Ejemplos: "¿Qué edad tiene?" → "Edad", "¿Cuál es su género?" → "Género",
+  "¿Con qué frecuencia consume shawarma?" → "Frecuencia de Consumo",
+  "¿Cuánto estaría dispuesto a pagar?" → "Disposición a Pagar"
+- Responde SOLO usando la función inferir_variables."""
 
 
 class AIAgent:
@@ -296,6 +338,93 @@ class AIAgent:
         result = {"parametros_globales": params, "productos": productos}
         if error:
             result["_agent_error"] = error
+        return result
+
+    def infer_variable_names(self, question_texts: Dict[int, str]) -> Dict[int, str]:
+        """
+        Infiere nombres cortos de variables estadísticas desde textos de preguntas.
+
+        Args:
+            question_texts: {1: "¿Qué edad tiene?", 2: "¿Cuál es su género?", ...}
+
+        Returns:
+            {1: "Edad", 2: "Género", ...}
+        """
+        if not question_texts:
+            return {}
+        if self.provider == "openai":
+            return self._infer_variables_openai(question_texts)
+        elif self.provider == "minimax":
+            return self._infer_variables_minimax(question_texts)
+        return self._infer_variables_fallback(question_texts)
+
+    def _build_variable_message(self, question_texts: Dict[int, str]) -> str:
+        lines = [f"Pregunta {num}: {text}" for num, text in sorted(question_texts.items())]
+        return "\n".join(lines)
+
+    def _parse_variable_response(self, tool_call) -> Dict[int, str]:
+        variables_list = json.loads(tool_call.function.arguments).get("variables", [])
+        return {item["numero"]: item["variable"] for item in variables_list}
+
+    def _infer_variables_openai(self, question_texts: Dict[int, str]) -> Dict[int, str]:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            kwargs = dict(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": VARIABLE_SYSTEM_PROMPT},
+                    {"role": "user", "content": self._build_variable_message(question_texts)},
+                ],
+                tools=[{"type": "function", "function": VARIABLE_SCHEMA}],
+                tool_choice={"type": "function", "function": {"name": "inferir_variables"}},
+            )
+            try:
+                response = client.chat.completions.create(**kwargs, temperature=0.1)
+            except Exception:
+                response = client.chat.completions.create(**kwargs)
+            return self._parse_variable_response(response.choices[0].message.tool_calls[0])
+        except Exception:
+            return self._infer_variables_fallback(question_texts)
+
+    def _infer_variables_minimax(self, question_texts: Dict[int, str]) -> Dict[int, str]:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=os.getenv("MINIMAX_API_KEY"),
+                base_url="https://api.minimax.chat/v1",
+            )
+            kwargs = dict(
+                model=os.getenv("MINIMAX_MODEL", "MiniMax-Text-01"),
+                messages=[
+                    {"role": "system", "content": VARIABLE_SYSTEM_PROMPT},
+                    {"role": "user", "content": self._build_variable_message(question_texts)},
+                ],
+                tools=[{"type": "function", "function": VARIABLE_SCHEMA}],
+                tool_choice={"type": "function", "function": {"name": "inferir_variables"}},
+            )
+            try:
+                response = client.chat.completions.create(**kwargs, temperature=0.1)
+            except Exception:
+                response = client.chat.completions.create(**kwargs)
+            return self._parse_variable_response(response.choices[0].message.tool_calls[0])
+        except Exception:
+            return self._infer_variables_fallback(question_texts)
+
+    def _infer_variables_fallback(self, question_texts: Dict[int, str]) -> Dict[int, str]:
+        """Fallback sin IA: extrae palabras clave de la pregunta."""
+        import re
+        stopwords = {
+            "qué", "cuál", "cuánto", "cuántos", "cuántas", "es", "su", "de",
+            "la", "el", "en", "con", "por", "tiene", "son", "ha", "una", "un",
+            "los", "las", "del", "al", "se", "que", "no", "si", "más",
+        }
+        result = {}
+        for num, text in question_texts.items():
+            clean = re.sub(r'[¿?¡!,.]', '', text).strip()
+            words = [w for w in clean.split() if w.lower() not in stopwords and len(w) > 2]
+            variable = " ".join(words[:2]).title() if words else f"Variable {num}"
+            result[num] = variable
         return result
 
 

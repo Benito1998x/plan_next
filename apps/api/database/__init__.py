@@ -54,7 +54,7 @@ class Database:
         Importa todos los modelos primero para que SQLModel los conozca.
         """
         # Importar modelos para que SQLModel los registre
-        from models.db import global_data, plan_data, trazabilidad  # noqa
+        from models.db import global_data, plan_data, trazabilidad, survey  # noqa
 
         SQLModel.metadata.create_all(self.engine)
         logger.info("All tables created successfully")

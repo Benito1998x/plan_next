@@ -26,3 +26,11 @@ python-dotenv>=1.0.0
 # Database - SQLModel + SQLite
 sqlmodel>=0.0.22
 aiosqlite>=0.20.0  # Async SQLite support
+
+# Data Engineering Pipeline (Bronze → Silver → Gold)
+pandas>=2.2.0
+openpyxl>=3.1.0  # ya incluido arriba, pandas lo usa para read_excel
+
+# Jupyter Notebook (evaluación del pipeline)
+jupyter>=1.1.0
+ipykernel>=6.29.0
