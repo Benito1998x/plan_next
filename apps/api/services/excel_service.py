@@ -1,16 +1,17 @@
 """
-Excel Service - Lee y genera archivos Excel usando IA (GPT-5nano/MiniMax).
+Excel Service - Lee y genera archivos Excel con estructura fija.
+
+Basado en plantilla_1.xlsx y plantilla_1_ejemplo_rellenado.xlsx
 
 Flujo:
-1. Cliente sube Excel con datos
-2. GPT-5nano lee y extrae datos (flexible ante variaciones)
-3. Sistema valida campos obligatorios
+1. Cliente sube Excel (plantilla_1.xlsx llenado)
+2. Sistema lee celdas específicas (B4:B16 para parámetros, B20:D29 para productos)
+3. Sistema valida campos obligatorios (nombre, rubro, ciudad)
 4. Sistema guarda en BD (Plan, ParametrosGlobales, Producto)
 5. Sistema completa con datos globales (defaults.yaml)
 6. Sistema genera Excel plantilla maestra
 """
 
-import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from openpyxl import Workbook, load_workbook
@@ -26,30 +27,57 @@ class ExcelService:
     """
     Servicio para procesar archivos Excel del plan de negocio.
 
-    Usa GPT-5nano/MiniMax para lectura flexible de datos.
-    Guarda en BD y genera plantilla maestra.
+    Estructura fija de la plantilla:
+    - Hoja: INICIO
+    - Parámetros Globales: celdas B4:B16
+    - Productos/Servicios: filas 20-29, columnas A-D
     """
 
-    # Campos obligatorios en Parámetros Globales
-    CAMPOS_OBLIGATORIOS_GLOBALES = ["nombre", "rubro", "ciudad", "departamento"]
+    # ============================================
+    # MAPEO DE CELDAS - ESTRUCTURA FIJA
+    # ============================================
 
-    # Campos obligatorios en Productos
-    CAMPOS_OBLIGATORIOS_PRODUCTOS = ["nombre", "unidad_medida", "peso_volumen"]
+    # Parámetros Globales (columna B, filas 4-16)
+    CELDAS_PARAMETROS = {
+        "nombre": "B4",  # Nombre del Proyecto
+        "rubro": "B5",  # Rubro / Sector
+        "ciudad": "B6",  # Ciudad
+        "departamento": "B7",  # Departamento
+        "pais": "B8",  # País
+        "moneda": "B9",  # Moneda
+        "tipo_cambio": "B10",  # Tipo de Cambio (Bs/$us)
+        "inflacion": "B11",  # Tasa de Inflación Anual
+        "horizonte": "B12",  # Horizonte de Proyección (años)
+        "anio_base": "B13",  # Año Base (Año 0)
+        "anio_inicio": "B14",  # Año Inicio Operaciones
+        "impuesto_iue": "B15",  # Impuesto IUE (%)
+        "impuesto_it": "B16",  # Impuesto IT (%)
+    }
 
-    def __init__(self, api_key: Optional[str] = None):
-        """
-        Inicializa el servicio Excel.
+    # Productos/Servicios (filas 20-29)
+    FILAS_PRODUCTOS_INICIO = 20
+    FILAS_PRODUCTOS_FIN = 29
+    COLUMNAS_PRODUCTOS = {
+        "numero": "A",  # N° (1-10, fijo)
+        "nombre": "B",  # Nombre del Producto
+        "unidad": "C",  # Unidad de Medida
+        "peso": "D",  # Peso/Vol por Unidad
+    }
 
-        Args:
-            api_key: API key para GPT-5nano/MiniMax (opcional, usa env var)
-        """
+    # Campos obligatorios (mínimo para crear plan)
+    CAMPOS_OBLIGATORIOS = ["nombre", "rubro", "ciudad"]
+
+    # Nombre de la hoja de trabajo
+    HOJA_TRABAJO = "INICIO"
+
+    def __init__(self):
+        """Inicializa el servicio Excel."""
         self.config = get_config_service()
         self.db = get_database()
-        self.api_key = api_key
 
-    async def leer_excel_cliente(self, file_path: Path) -> Dict[str, Any]:
+    def leer_excel_cliente(self, file_path: Path) -> Dict[str, Any]:
         """
-        Lee un Excel del cliente y extrae los datos usando IA.
+        Lee un Excel del cliente y extrae los datos de celdas específicas.
 
         Args:
             file_path: Ruta al archivo Excel del cliente
@@ -57,194 +85,135 @@ class ExcelService:
         Returns:
             Dict con datos extraídos:
             {
-                "parametros_globales": {...},
-                "productos": [...]
+                "parametros_globales": {nombre, rubro, ciudad, ...},
+                "productos": [{nombre, unidad, peso}, ...]
             }
 
         Raises:
             ValidationError: Si faltan campos obligatorios
             ProcessingError: Si hay error al leer el archivo
         """
-        # Paso 1: Leer Excel con openpyxl
-        try:
-            wb = load_workbook(file_path, data_only=True)
-        except Exception as e:
+        # Paso 1: Verificar que el archivo existe
+        if not file_path.exists():
             raise ProcessingError(
-                message=f"Error al leer Excel: {str(e)}",
+                message=f"Archivo no encontrado: {file_path}",
                 file_name=str(file_path),
                 operation="leer",
                 code=ErrorCodes.EXCEL_READ_ERROR,
             )
 
-        # Paso 2: Buscar las dos tablas
-        # Asumimos que están en hojas separadas o en la misma hoja
-        ws = wb.active
+        # Paso 2: Cargar el archivo Excel
+        try:
+            wb = load_workbook(file_path, data_only=True)
+        except Exception as e:
+            raise ProcessingError(
+                message=f"Error al abrir Excel: {str(e)}",
+                file_name=str(file_path),
+                operation="abrir",
+                code=ErrorCodes.EXCEL_READ_ERROR,
+            )
 
-        # Extraer datos crudos del Excel
-        datos_crudos = self._extraer_datos_crudos(ws)
+        # Paso 3: Obtener la hoja de trabajo
+        if self.HOJA_TRABAJO not in wb.sheetnames:
+            raise TemplateError(
+                message=f"Hoja '{self.HOJA_TRABAJO}' no encontrada en el Excel",
+                template_name=str(file_path),
+                code=ErrorCodes.TEMPLATE_CORRUPTED,
+            )
 
-        # Paso 3: Usar IA para estructurar los datos
-        datos_estructurados = await self._estructurar_con_ia(datos_crudos)
+        ws = wb[self.HOJA_TRABAJO]
 
-        # Paso 4: Validar campos obligatorios
-        self._validar_campos_obligatorios(datos_estructurados)
+        # Paso 4: Extraer parámetros globales
+        parametros = self._extraer_parametros(ws)
 
-        return datos_estructurados
+        # Paso 5: Extraer productos
+        productos = self._extraer_productos(ws)
 
-    def _extraer_datos_crudos(self, worksheet: Worksheet) -> Dict[str, Any]:
-        """
-        Extrae todos los datos del worksheet de forma cruda.
+        # Paso 6: Validar campos obligatorios
+        self._validar_campos_obligatorios(parametros)
 
-        Args:
-            worksheet: Hoja de Excel
-
-        Returns:
-            Dict con datos crudos extraídos
-        """
-        datos = {"hoja": worksheet.title, "filas": []}
-
-        # Leer todas las filas con datos
-        for row in worksheet.iter_rows(values_only=True):
-            # Filtrar filas vacías
-            if any(cell is not None for cell in row):
-                datos["filas"].append(list(row))
-
-        return datos
-
-    async def _estructurar_con_ia(self, datos_crudos: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Usa GPT-5nano/MiniMax para estructurar los datos crudos.
-
-        Args:
-            datos_crudos: Datos extraídos del Excel
-
-        Returns:
-            Dict estructurado con parametros_globales y productos
-        """
-        # TODO: Implementar llamada a MiniMax API
-        # Por ahora, parseamos manualmente asumiendo formato conocido
-
-        # Buscar tabla de Parámetros Globales
-        parametros = self._buscar_parametros_globales(datos_crudos["filas"])
-
-        # Buscar tabla de Productos
-        productos = self._buscar_productos(datos_crudos["filas"])
+        # Paso 7: Cerrar el libro
+        wb.close()
 
         return {"parametros_globales": parametros, "productos": productos}
 
-    def _buscar_parametros_globales(self, filas: List[List]) -> Dict[str, Any]:
+    def _extraer_parametros(self, ws: Worksheet) -> Dict[str, Any]:
         """
-        Busca y extrae parámetros globales del Excel.
-
-        Asume formato:
-        | Campo | Valor |
-        |-------|-------|
-        | Nombre | Shawarma Cruz |
-        | Rubro | Restaurant |
+        Extrae parámetros globales de celdas específicas.
 
         Args:
-            filas: Lista de filas del Excel
+            ws: Worksheet de openpyxl
 
         Returns:
-            Dict con parámetros encontrados
+            Dict con parámetros extraídos
         """
         parametros = {}
 
-        for i, fila in enumerate(filas):
-            # Buscar patrones: "Nombre", "Rubro", "Ciudad", "Departamento"
-            if len(fila) >= 2:
-                campo = str(fila[0]).strip().lower() if fila[0] else ""
-                valor = fila[1] if len(fila) > 1 else None
+        for campo, celda in self.CELDAS_PARAMETROS.items():
+            valor = ws[celda].value
 
-                # Mapear campos conocidos
-                if "nombre" in campo or "proyecto" in campo or "empresa" in campo:
-                    parametros["nombre"] = valor
-                elif "rubro" in campo or "sector" in campo:
-                    parametros["rubro"] = valor
-                elif "ciudad" in campo:
-                    parametros["ciudad"] = valor
-                elif "departamento" in campo or "depto" in campo:
-                    parametros["departamento"] = valor
+            # Convertir a tipo apropiado
+            if campo in ["tipo_cambio", "inflacion", "impuesto_iue", "impuesto_it"]:
+                # Números decimales
+                parametros[campo] = float(valor) if valor is not None else None
+            elif campo in ["horizonte", "anio_base", "anio_inicio"]:
+                # Enteros
+                parametros[campo] = int(valor) if valor is not None else None
+            else:
+                # Texto
+                parametros[campo] = str(valor).strip() if valor is not None else None
 
         return parametros
 
-    def _buscar_productos(self, filas: List[List]) -> List[Dict[str, Any]]:
+    def _extraer_productos(self, ws: Worksheet) -> List[Dict[str, Any]]:
         """
-        Busca y extrae productos del Excel.
-
-        Asume formato de tabla:
-        | N° | Nombre | Unidad | Peso |
+        Extrae productos de la hoja de trabajo (filas 20-29).
 
         Args:
-            filas: Lista de filas del Excel
+            ws: Worksheet de openpyxl
 
         Returns:
             Lista de productos encontrados
         """
         productos = []
-        en_tabla_productos = False
 
-        for i, fila in enumerate(filas):
-            # Detectar inicio de tabla de productos
-            if len(fila) >= 2:
-                primera_celda = str(fila[0]).strip().lower() if fila[0] else ""
+        for fila in range(self.FILAS_PRODUCTOS_INICIO, self.FILAS_PRODUCTOS_FIN + 1):
+            nombre = ws[f"{self.COLUMNAS_PRODUCTOS['nombre']}{fila}"].value
+            unidad = ws[f"{self.COLUMNAS_PRODUCTOS['unidad']}{fila}"].value
+            peso = ws[f"{self.COLUMNAS_PRODUCTOS['peso']}{fila}"].value
 
-                # Buscar encabezado "Producto" o "Productos/Servicios"
-                if "producto" in primera_celda or "servicio" in primera_celda:
-                    en_tabla_productos = True
-                    continue
-
-                # Si estamos en la tabla, extraer productos
-                if en_tabla_productos and fila[0] is not None:
-                    # Ignorar filas de encabezado
-                    if str(fila[0]).strip().lower() in ["n°", "n", "numero", "#"]:
-                        continue
-
-                    producto = {
-                        "numero": fila[0] if fila[0] else len(productos) + 1,
-                        "nombre": fila[1] if len(fila) > 1 else "",
-                        "unidad_medida": fila[2] if len(fila) > 2 else "Gramos",
-                        "peso_volumen": fila[3] if len(fila) > 3 else 125.0,
-                    }
-
-                    # Validar que tiene nombre
-                    if producto["nombre"]:
-                        productos.append(producto)
+            # Solo agregar si tiene nombre (producto válido)
+            if nombre is not None and str(nombre).strip():
+                producto = {
+                    "numero": fila - self.FILAS_PRODUCTOS_INICIO + 1,
+                    "nombre": str(nombre).strip(),
+                    "unidad_medida": str(unidad).strip() if unidad else "Gramos",
+                    "peso_volumen": float(peso) if peso else 125.0,
+                }
+                productos.append(producto)
 
         return productos
 
-    def _validar_campos_obligatorios(self, datos: Dict[str, Any]) -> None:
+    def _validar_campos_obligatorios(self, parametros: Dict[str, Any]) -> None:
         """
-        Valida que todos los campos obligatorios estén presentes.
+        Valida que los campos obligatorios estén presentes.
 
         Args:
-            datos: Datos estructurados
+            parametros: Dict con parámetros extraídos
 
         Raises:
             ValidationError: Si faltan campos obligatorios
         """
         errores = []
 
-        # Validar parámetros globales
-        params = datos.get("parametros_globales", {})
-        for campo in self.CAMPOS_OBLIGATORIOS_GLOBALES:
-            if campo not in params or params[campo] is None:
-                errores.append(f"Parámetro faltante: {campo}")
-
-        # Validar productos
-        productos = datos.get("productos", [])
-        if not productos:
-            errores.append("No se encontraron productos")
-        else:
-            for i, prod in enumerate(productos):
-                for campo in self.CAMPOS_OBLIGATORIOS_PRODUCTOS:
-                    if campo not in prod or prod[campo] is None:
-                        errores.append(f"Producto {i + 1}: campo '{campo}' faltante")
+        for campo in self.CAMPOS_OBLIGATORIOS:
+            if campo not in parametros or parametros[campo] is None:
+                errores.append(f"Campo obligatorio faltante: {campo}")
 
         if errores:
             raise ValidationError(
-                message="Faltan campos obligatorios",
-                field="validacion",
+                message="Faltan campos obligatorios en el Excel",
+                field="parametros_globales",
                 code=ErrorCodes.MISSING_FIELD,
                 details={"errores": errores},
             )
@@ -252,6 +221,8 @@ class ExcelService:
     async def guardar_en_bd(self, datos: Dict[str, Any]) -> Plan:
         """
         Guarda los datos en la base de datos.
+
+        Completa los campos faltantes con defaults del config.
 
         Args:
             datos: Datos estructurados del Excel
@@ -262,55 +233,67 @@ class ExcelService:
         Raises:
             DatabaseError: Si hay error al guardar
         """
+        parametros = datos["parametros_globales"]
+        productos = datos["productos"]
+
         with self.db.get_session() as session:
             # Crear Plan
             plan = Plan(
-                nombre=datos["parametros_globales"]["nombre"],
-                rubro=datos["parametros_globales"]["rubro"],
-                ciudad=datos["parametros_globales"]["ciudad"],
-                departamento=datos["parametros_globales"]["departamento"],
-                estado=EstadoPlan.EN_PROCESO,
+                nombre=parametros.get("nombre"),
+                rubro=parametros.get("rubro"),
+                ciudad=parametros.get("ciudad"),
+                departamento=parametros.get("departamento", "Sin especificar"),
+                estado=EstadoPlan.BORRADOR,
             )
             session.add(plan)
             session.commit()
             session.refresh(plan)
 
-            # Crear Parámetros Globales (completados con defaults)
+            # Obtener defaults del config
             config_data = self.config.get_all()
-            parametros = ParametrosGlobales(
+
+            # Crear Parámetros Globales (completados con defaults)
+            parametros_bd = ParametrosGlobales(
                 plan_id=plan.id,
-                pais=config_data.get("pais", {}).get("nombre", "Bolivia"),
-                moneda_codigo=config_data.get("moneda", {}).get("codigo", "Bs"),
-                tipo_cambio_usd=config_data.get("moneda", {}).get(
-                    "tipo_cambio_usd", 6.96
-                ),
-                tasa_inflacion_anual=config_data.get("indicadores", {}).get(
-                    "tasa_inflacion_anual", 2.0
-                ),
+                pais=parametros.get("pais")
+                or config_data.get("pais", {}).get("nombre", "Bolivia"),
+                moneda_codigo=parametros.get("moneda")
+                or config_data.get("moneda", {}).get("codigo", "Bs"),
+                tipo_cambio_usd=parametros.get("tipo_cambio")
+                or config_data.get("moneda", {}).get("tipo_cambio_usd", 6.96),
+                tasa_inflacion_anual=parametros.get("inflacion")
+                or config_data.get("indicadores", {}).get("tasa_inflacion_anual", 0.02),
                 tasa_interes_promedio=config_data.get("indicadores", {}).get(
                     "tasa_interes_promedio", 8.5
                 ),
-                horizonte_anios=config_data.get("proyeccion", {}).get(
-                    "horizonte_anios", 5
-                ),
-                anio_base=config_data.get("proyeccion", {}).get("anio_base", 2025),
-                anio_inicio_operaciones=config_data.get("proyeccion", {}).get(
+                horizonte_anios=parametros.get("horizonte")
+                or config_data.get("proyeccion", {}).get("horizonte_anios", 5),
+                anio_base=parametros.get("anio_base")
+                or config_data.get("proyeccion", {}).get("anio_base", 2025),
+                anio_inicio_operaciones=parametros.get("anio_inicio")
+                or config_data.get("proyeccion", {}).get(
                     "anio_inicio_operaciones", 2026
                 ),
-                impuesto_iue=config_data.get("impuestos", {})
+                impuesto_iue=parametros.get("impuesto_iue")
+                or config_data.get("impuestos", {})
                 .get("iue", {})
-                .get("porcentaje", 25.0),
-                impuesto_it=config_data.get("impuestos", {})
+                .get("porcentaje", 0.25),
+                impuesto_it=parametros.get("impuesto_it")
+                or config_data.get("impuestos", {})
                 .get("it", {})
-                .get("porcentaje", 3.0),
+                .get("porcentaje", 0.03),
+                formato_fecha=config_data.get("formato", {}).get("fecha", "%d/%m/%Y"),
+                decimales_monetarios=config_data.get("formato", {}).get(
+                    "decimales_monetarios", 2
+                ),
             )
-            session.add(parametros)
+            session.add(parametros_bd)
 
             # Crear Productos
-            for i, prod_data in enumerate(datos.get("productos", [])):
+            for prod_data in productos:
                 producto = Producto(
                     plan_id=plan.id,
-                    numero=i + 1,
+                    numero=prod_data["numero"],
                     nombre=prod_data["nombre"],
                     unidad_medida=prod_data.get("unidad_medida", "Gramos"),
                     peso_volumen=prod_data.get("peso_volumen", 125.0),
@@ -331,6 +314,8 @@ class ExcelService:
         """
         Genera la plantilla Excel maestra con todos los datos.
 
+        Usa la misma estructura que plantilla_1.xlsx
+
         Args:
             plan: Plan de negocio
             parametros: Parámetros globales
@@ -343,50 +328,70 @@ class ExcelService:
         Raises:
             TemplateError: Si hay error al generar la plantilla
         """
-        # TODO: Implementar generación de Excel
-        # Por ahora, crear un Excel básico
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Parámetros Globales"
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = self.HOJA_TRABAJO
 
-        # Escribir parámetros
-        ws["A1"] = "Campo"
-        ws["B1"] = "Valor"
+            # ============================================
+            # ESCRIBIR PARÁMETROS GLOBALES
+            # ============================================
 
-        parametros_data = [
-            ("Nombre del Proyecto", plan.nombre),
-            ("Rubro", plan.rubro),
-            ("Ciudad", plan.ciudad),
-            ("Departamento", plan.departamento),
-            ("País", parametros.pais),
-            ("Moneda", parametros.moneda_codigo),
-            ("Tipo de Cambio (USD)", parametros.tipo_cambio_usd),
-            ("Tasa de Inflación Anual (%)", parametros.tasa_inflacion_anual),
-            ("Horizonte de Proyección (años)", parametros.horizonte_anios),
-            ("Año Base", parametros.anio_base),
-            ("Año Inicio Operaciones", parametros.anio_inicio_operaciones),
-            ("Impuesto IUE (%)", parametros.impuesto_iue),
-            ("Impuesto IT (%)", parametros.impuesto_it),
-        ]
+            # Título
+            ws["A1"] = "PLAN DE NEGOCIO"
+            ws["A3"] = "PARÁMETROS GLOBALES"
 
-        for i, (campo, valor) in enumerate(parametros_data, start=2):
-            ws[f"A{i}"] = campo
-            ws[f"B{i}"] = valor
+            # Escribir etiquetas (columna A) y valores (columna B)
+            parametros_data = [
+                ("Nombre del Proyecto", plan.nombre, "B4"),
+                ("Rubro / Sector", plan.rubro, "B5"),
+                ("Ciudad", plan.ciudad, "B6"),
+                ("Departamento", plan.departamento, "B7"),
+                ("País", parametros.pais, "B8"),
+                ("Moneda", parametros.moneda_codigo, "B9"),
+                ("Tipo de Cambio (Bs/$us)", parametros.tipo_cambio_usd, "B10"),
+                ("Tasa de Inflación Anual", parametros.tasa_inflacion_anual, "B11"),
+                ("Horizonte de Proyección (años)", parametros.horizonte_anios, "B12"),
+                ("Año Base (Año 0)", parametros.anio_base, "B13"),
+                ("Año Inicio Operaciones", parametros.anio_inicio_operaciones, "B14"),
+                ("Impuesto IUE (%)", parametros.impuesto_iue, "B15"),
+                ("Impuesto IT (%)", parametros.impuesto_it, "B16"),
+            ]
 
-        # Crear hoja de productos
-        ws_productos = wb.create_sheet("Productos")
-        ws_productos["A1"] = "N°"
-        ws_productos["B1"] = "Nombre"
-        ws_productos["C1"] = "Unidad de Medida"
-        ws_productos["D1"] = "Peso/Volumen"
+            for i, (etiqueta, valor, celda) in enumerate(parametros_data):
+                # Etiqueta en columna A (filas 4-16)
+                ws[f"A{4 + i}"] = etiqueta
+                # Valor en columna B
+                ws[celda] = valor
 
-        for i, prod in enumerate(productos, start=2):
-            ws_productos[f"A{i}"] = prod.numero
-            ws_productos[f"B{i}"] = prod.nombre
-            ws_productos[f"C{i}"] = prod.unidad_medida
-            ws_productos[f"D{i}"] = prod.peso_volumen
+            # ============================================
+            # ESCRIBIR PRODUCTOS / SERVICIOS
+            # ============================================
 
-        # Guardar archivo
-        wb.save(output_path)
+            ws["A18"] = "PRODUCTOS / SERVICIOS"
 
-        return output_path
+            # Encabezados
+            ws["A19"] = "N°"
+            ws["B19"] = "Nombre del Producto"
+            ws["C19"] = "Unidad de Medida"
+            ws["D19"] = "Peso/Vol por Unidad"
+
+            # Productos (filas 20-29)
+            for i, prod in enumerate(productos):
+                fila = 20 + i
+                ws[f"A{fila}"] = prod.numero
+                ws[f"B{fila}"] = prod.nombre
+                ws[f"C{fila}"] = prod.unidad_medida
+                ws[f"D{fila}"] = prod.peso_volumen
+
+            # Guardar archivo
+            wb.save(output_path)
+
+            return output_path
+
+        except Exception as e:
+            raise TemplateError(
+                message=f"Error al generar plantilla maestra: {str(e)}",
+                template_name=str(output_path),
+                code=ErrorCodes.EXCEL_WRITE_ERROR,
+            )
