@@ -11,6 +11,7 @@ import logging
 
 from api.v1.upload import router as upload_router
 from api.v1.survey import router as survey_router
+from api.v1.complete import router as complete_router
 from database import get_database
 
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(upload_router)
 app.include_router(survey_router)
+app.include_router(complete_router)
 
 
 @app.get("/health", tags=["health"])

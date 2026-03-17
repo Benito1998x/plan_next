@@ -64,23 +64,28 @@ async def process_survey(
                 detail=f"Template Word no encontrado: {WORD_TEMPLATE}",
             )
 
-        survey_id   = int(time.time())
-        output_path = temp_dir / f"tabulacion_{survey_id}.docx"
+        # Archivo temporal para el pipeline (se renombra al SQLite ID después)
+        tmp_path = temp_dir / f"tabulacion_tmp_{int(time.time())}.docx"
 
         result = run_pipeline(
             encuesta_path=encuesta_path,
             template_path=WORD_TEMPLATE,
-            output_path=output_path,
+            output_path=tmp_path,
         )
+
+        # Usar el SQLite survey_id como identificador único del archivo descargable
+        sqlite_id   = result["survey_id"]
+        final_path  = temp_dir / f"tabulacion_{sqlite_id}.docx"
+        tmp_path.rename(final_path)
 
         return APIResponse(
             message="Encuesta procesada exitosamente",
             data={
-                "survey_id"       : result["survey_id"],
+                "survey_id"       : sqlite_id,
                 "bronze_rows"     : result["bronze_rows"],
                 "silver_questions": result["silver_questions"],
                 "variable_names"  : result["variable_names"],
-                "word_url"        : f"/api/v1/download/survey/{survey_id}/word",
+                "word_url"        : f"/api/v1/download/survey/{sqlite_id}/word",
             },
         )
 
