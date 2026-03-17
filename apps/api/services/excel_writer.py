@@ -6,12 +6,47 @@ Soporta cualquier versión de plantilla definida en excel_templates.yaml.
 
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, Alignment, PatternFill
 
 from services.template_config import TemplateConfig, get_template_config
 from core.exceptions import TemplateError, ErrorCodes
+
+# Mapeo fijo de celdas → coincide con plantilla 1.xlsx
+_PARAM_CELLS = {
+    "nombre": "B4",
+    "rubro": "B5",
+    "ciudad": "B6",
+    "departamento": "B7",
+    "pais": "B8",
+    "moneda": "B9",
+    "tipo_cambio": "B10",
+    "inflacion": "B11",
+    "horizonte": "B12",
+    "anio_base": "B13",
+    "anio_inicio": "B14",
+    "impuesto_iue": "B15",
+    "impuesto_it": "B16",
+}
+_PRODUCTOS_FILA_INICIO = 20
+_PRODUCTOS_COLS = {"nombre": "B", "unidad_medida": "C", "peso_volumen": "D"}
+
+# Estilos que la plantilla 1.xlsx define para sus celdas de input
+# fgColor usa formato AARRGGBB: FF=opaco + FFFFCC=amarillo claro
+_YELLOW_FILL = PatternFill(fill_type="solid", fgColor="FFFFFFCC")
+_BLUE_FONT   = Font(color="FF0000FF", bold=True, size=10)          # AARRGGBB: opaco azul puro
+
+# Number formats por campo (solo los que necesitan algo distinto de 'General')
+_PARAM_NUMBER_FORMATS = {
+    "tipo_cambio":  '#,##0.00',   # 6.96
+    "inflacion":    '0%',          # 2%
+    "horizonte":    '0',           # 5
+    "anio_base":    '0',           # 2025
+    "anio_inicio":  '0',           # 2026
+    "impuesto_iue": '0%',          # 25%
+    "impuesto_it":  '0%',          # 3%
+}
 
 
 class ExcelWriter:
@@ -279,14 +314,63 @@ class ExcelWriter:
     def apply_style(
         self, ws: Worksheet, section: str, start_row: int, end_row: int
     ) -> None:
+        """Aplica estilos a una sección (opcional)."""
+        pass
+
+    def fill_template(
+        self,
+        template_path: Path,
+        output_path: Path,
+        parametros: Dict[str, Any],
+        productos: List[Dict[str, Any]],
+    ) -> Path:
         """
-        Aplica estilos a una sección (opcional).
+        Rellena la plantilla Excel existente con los datos del plan.
+
+        Abre plantilla 1.xlsx, escribe los valores en las celdas correctas
+        y guarda como un archivo nuevo, preservando todo el formato original.
 
         Args:
-            ws: Worksheet
-            section: Nombre de la sección
-            start_row: Fila inicial
-            end_row: Fila final
+            template_path: Ruta a la plantilla .xlsx (plantilla 1.xlsx)
+            output_path: Ruta del archivo de salida
+            parametros: Dict con parámetros globales del plan
+            productos: Lista de productos (máx 10)
+
+        Returns:
+            Path al archivo generado
         """
-        # TODO: Implementar estilos personalizados
-        pass
+        try:
+            wb = load_workbook(template_path)
+            ws = wb["INICIO"]
+
+            # Parámetros globales → celdas B4:B16
+            for field, cell_addr in _PARAM_CELLS.items():
+                value = parametros.get(field)
+                if value is None:
+                    continue
+                cell = ws[cell_addr]
+                cell.value = value
+                # Aplicar estilo: font azul bold + fill amarillo + number format
+                cell.font = _BLUE_FONT
+                cell.fill = _YELLOW_FILL
+                if field in _PARAM_NUMBER_FORMATS:
+                    cell.number_format = _PARAM_NUMBER_FORMATS[field]
+
+            # Productos → filas 20-29, columnas B, C, D
+            for i, prod in enumerate(productos[:10]):
+                row = _PRODUCTOS_FILA_INICIO + i
+                for col_key, col_letter in _PRODUCTOS_COLS.items():
+                    cell = ws[f"{col_letter}{row}"]
+                    cell.value = prod.get(col_key, "")
+                    cell.font = _BLUE_FONT
+                    cell.fill = _YELLOW_FILL
+
+            wb.save(output_path)
+            return output_path
+
+        except Exception as e:
+            raise TemplateError(
+                message=f"Error al rellenar plantilla Excel: {str(e)}",
+                template_name=str(template_path),
+                code=ErrorCodes.EXCEL_WRITE_ERROR,
+            )

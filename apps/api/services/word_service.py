@@ -7,11 +7,47 @@ Usa python-docx para crear documentos con tablas y formato.
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from docx import Document
-from docx.shared import Pt, Inches
+from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 from core.exceptions import ProcessingError, ErrorCodes
+
+
+def _add_table_borders(table, color: str = "000000", size: int = 6) -> None:
+    """
+    Agrega bordes visibles a toda la tabla usando XML de OOXML.
+
+    Word no expone borders via python-docx API directamente.
+    Se inyecta <w:tblBorders> con bordes simples en cada lado.
+
+    Args:
+        table: tabla python-docx
+        color: color hex sin # (default negro)
+        size: grosor en 1/8 pt (6 = 0.75pt, 8 = 1pt)
+    """
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+
+    # Remover borders existentes para no duplicar
+    for existing in tblPr.findall(qn("w:tblBorders")):
+        tblPr.remove(existing)
+
+    tblBorders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), str(size))
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), color)
+        tblBorders.append(el)
+
+    tblPr.append(tblBorders)
 
 
 class WordService:
@@ -153,7 +189,8 @@ class WordService:
 
         # Crear tabla
         table = doc.add_table(rows=len(fields), cols=2)
-        table.style = "Table Grid"
+        table.style = "Normal Table"
+        _add_table_borders(table)
 
         # Llenar tabla
         for i, (field_key, field_label) in enumerate(fields):
@@ -187,7 +224,8 @@ class WordService:
 
         # Crear tabla con encabezados
         table = doc.add_table(rows=len(productos) + 1, cols=4)
-        table.style = "Table Grid"
+        table.style = "Normal Table"
+        _add_table_borders(table)
 
         # Encabezados
         headers = [
@@ -272,21 +310,50 @@ class WordService:
         output_path: Path,
     ) -> Path:
         """
-        Genera documento Word usando una plantilla existente.
+        Rellena la plantilla Word existente con los datos del plan.
+
+        Abre plantilla 1.docx, actualiza el título con el nombre del proyecto,
+        y agrega las tablas de parámetros y productos preservando los estilos
+        originales del documento.
 
         Args:
-            template_path: Ruta a la plantilla .docx
-            parametros: Dict con parámetros
+            template_path: Ruta a la plantilla .docx (plantilla 1.docx)
+            parametros: Dict con parámetros globales
             productos: Lista de productos
-            output_path: Ruta donde guardar
+            output_path: Ruta donde guardar el documento generado
 
         Returns:
             Path al documento generado
-
-        Note:
-            Por ahora, genera desde cero. En el futuro, puede usar
-            python-docx-template para merge de plantillas.
         """
-        # TODO: Implementar merge con plantilla
-        # Por ahora, usar generate_from_excel_data
-        return self.generate_from_excel_data(parametros, productos, output_path)
+        try:
+            doc = Document(template_path)
+
+            # Actualizar el párrafo de título ('PLANTILLA') con el nombre del proyecto
+            nombre = parametros.get("nombre", "Plan de Negocio")
+            for para in doc.paragraphs:
+                if para.text.strip() == "PLANTILLA":
+                    para.clear()
+                    run = para.add_run(f"PLAN DE NEGOCIO: {nombre.upper()}")
+                    run.bold = True
+                    run.font.size = Pt(16)
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    break
+
+            # Agregar sección 1: Parámetros Globales (después del heading existente)
+            self._add_parameters_table(doc, parametros)
+
+            # Agregar sección 2: Productos / Servicios
+            doc.add_paragraph()
+            self._add_section_title(doc, "2. Productos / Servicios")
+            self._add_products_table(doc, productos)
+
+            doc.save(output_path)
+            return output_path
+
+        except Exception as e:
+            raise ProcessingError(
+                message=f"Error al rellenar plantilla Word: {str(e)}",
+                file_name=str(output_path),
+                operation="merge_template",
+                code=ErrorCodes.WORD_GENERATION_ERROR,
+            )

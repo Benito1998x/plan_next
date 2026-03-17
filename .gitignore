@@ -68,3 +68,14 @@ Thumbs.db
 # Project specific
 *.pyc
 .mypy_cache/
+
+# Test outputs in plantillas/
+plantillas/excel/plan_*.xlsx
+plantillas/word/plan_*.docx
+plantillas/word/~$*
+plantillas/excel/Encuesta.xlsx
+plantillas/excel/plan_formato_test.xlsx
+
+# Claude artifacts
+.claude/
+nul
