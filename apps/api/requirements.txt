@@ -1,0 +1,25 @@
+# FastAPI and Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Excel Processing
+openpyxl==3.1.2
+
+# Word Processing
+python-docx==1.1.0
+
+# Configuration
+pyyaml==6.0.1
+
+# File Upload
+python-multipart==0.0.6
+
+# Data Validation (usually included with FastAPI, but explicit)
+pydantic==2.5.2
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Database - SQLModel + SQLite
+sqlmodel==0.0.14
+aiosqlite==0.19.0  # Async SQLite support

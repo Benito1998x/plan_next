@@ -1,0 +1,47 @@
+# Configuración por defecto para Plan de Negocio - Bolivia
+# Esta configuración se usa para completar campos que el cliente no proporciona
+
+# Información del País
+pais:
+  nombre: "Bolivia"
+  codigo_iso: "BO"
+  zona_horaria: "America/La_Paz"
+
+# Configuración Monetaria
+moneda:
+  codigo: "Bs"
+  nombre: "Boliviano"
+  simbolo: "Bs"
+  tipo_cambio_usd: 6.96  # Tipo de cambio Boliviano a Dólar
+
+# Indicadores Económicos
+indicadores:
+  tasa_inflacion_anual: 2.0  # Porcentaje
+  tasa_interes_promedio: 8.5  # Porcentaje anual
+
+# Proyección Financiera
+proyeccion:
+  horizonte_anios: 5
+  anio_base: 2025  # Año 0
+  anio_inicio_operaciones: 2026
+
+# Impuestos (Bolivia)
+impuestos:
+  iue:  # Impuesto a las Utilidades de las Empresas
+    porcentaje: 25.0
+    descripcion: "Impuesto a las Utilidades de las Empresas"
+  it:  # Impuesto a las Transacciones (IT/ITF)
+    porcentaje: 3.0
+    descripcion: "Impuesto a las Transacciones"
+
+# Formato de Fechas y Números
+formato:
+  fecha: "%d/%m/%Y"
+  numero_decimal: "."
+  separador_miles: ","
+  decimales_monetarios: 2
+
+# Valores por defecto para productos
+producto:
+  unidad_medida_default: "Gramos"
+  peso_volumen_default: 125
