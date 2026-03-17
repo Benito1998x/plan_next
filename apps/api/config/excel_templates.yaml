@@ -1,0 +1,218 @@
+# Configuración de Plantillas Excel - Business Plan Automation Engine
+# Este archivo define la estructura de cada versión de plantilla
+
+templates:
+  # ==================================================================
+  # VERSIÓN 1 - Plantilla Simple (Phase 1 - Actual)
+  # ==================================================================
+  v1:
+    name: "plantilla_1"
+    description: "Plantilla simple - Phase 1 (Parámetros + Productos)"
+    file: "templates/v1/plantilla_1.xlsx"
+    sheet: "INICIO"
+    
+    sections:
+      # --------------------------------------------------------------
+      # PARÁMETROS GLOBALES
+      # --------------------------------------------------------------
+      parametros_globales:
+        type: "key_value"
+        description: "Parámetros globales del proyecto"
+        start_row: 4
+        end_row: 16
+        columns:
+          label: "A"
+          value: "B"
+        fields:
+          - name: "nombre"
+            label: "Nombre del Proyecto"
+            type: "string"
+            required: true
+          - name: "rubro"
+            label: "Rubro / Sector"
+            type: "string"
+            required: true
+          - name: "ciudad"
+            label: "Ciudad"
+            type: "string"
+            required: true
+          - name: "departamento"
+            label: "Departamento"
+            type: "string"
+            required: false
+          - name: "pais"
+            label: "País"
+            type: "string"
+            default: "Bolivia"
+          - name: "moneda"
+            label: "Moneda"
+            type: "string"
+            default: "Bs"
+          - name: "tipo_cambio"
+            label: "Tipo de Cambio (Bs/$us)"
+            type: "float"
+            default: 6.96
+          - name: "inflacion"
+            label: "Tasa de Inflación Anual"
+            type: "percentage"
+            default: 0.02
+          - name: "horizonte"
+            label: "Horizonte de Proyección (años)"
+            type: "integer"
+            default: 5
+          - name: "anio_base"
+            label: "Año Base (Año 0)"
+            type: "year"
+            default: 2025
+          - name: "anio_inicio"
+            label: "Año Inicio Operaciones"
+            type: "year"
+            default: 2026
+          - name: "impuesto_iue"
+            label: "Impuesto IUE (%)"
+            type: "percentage"
+            default: 0.25
+          - name: "impuesto_it"
+            label: "Impuesto IT (%)"
+            type: "percentage"
+            default: 0.03
+      
+      # --------------------------------------------------------------
+      # PRODUCTOS / SERVICIOS
+      # --------------------------------------------------------------
+      productos_servicios:
+        type: "table"
+        description: "Catálogo de productos o servicios"
+        header_row: 19
+        data_start_row: 20
+        data_end_row: 29
+        max_rows: 10
+        columns:
+          numero:
+            column: "A"
+            label: "N°"
+            type: "integer"
+            auto: true  # Auto-generated (1, 2, 3...)
+          nombre:
+            column: "B"
+            label: "Nombre del Producto"
+            type: "string"
+            required: true
+          unidad:
+            column: "C"
+            label: "Unidad de Medida"
+            type: "string"
+            default: "Gramos"
+          peso:
+            column: "D"
+            label: "Peso/Vol por Unidad"
+            type: "float"
+            default: 125.0
+
+  # ==================================================================
+  # VERSIÓN 2 - Plantilla Expandida (Phase 2 - Futuro)
+  # ==================================================================
+  v2:
+    name: "plantilla_2"
+    description: "Plantilla expandida - Phase 2 (+ Análisis de Mercado)"
+    file: "templates/v2/plantilla_2.xlsx"
+    sheet: "INICIO"
+    
+    # Inherits from v1 and adds sections
+    extends: "v1"
+    
+    sections:
+      # Include all from v1...
+      # Plus new sections:
+      
+      analisis_mercado:
+        type: "table"
+        description: "Análisis de mercado (PESTEL, Porter, FODA)"
+        header_row: 32
+        data_start_row: 33
+        data_end_row: 50
+        columns:
+          aspecto:
+            column: "A"
+            label: "Aspecto"
+            type: "string"
+          descripcion:
+            column: "B"
+            label: "Descripción"
+            type: "string"
+          valoracion:
+            column: "C"
+            label: "Valoración"
+            type: "string"
+
+  # ==================================================================
+  # VERSIÓN 3 - Plan Completo (Phase 3 - Futuro)
+  # ==================================================================
+  v3:
+    name: "plantilla_completa"
+    description: "Plan de negocio completo - Phase 3"
+    file: "templates/v3/plantilla_completa.xlsx"
+    
+    # Multiple sheets for complex plan
+    sheets:
+      - name: "INICIO"
+        sections:
+          - parametros_globales
+          - productos_servicios
+      - name: "MERCADO"
+        sections:
+          - analisis_pestel
+          - analisis_porter
+          - analisis_foda
+      - name: "FINANCIERO"
+        sections:
+          - inversion_inicial
+          - estructura_costos
+          - flujo_caja
+          - indicadores
+
+# ==================================================================
+# TIPOS DE DATOS
+# ==================================================================
+types:
+  string:
+    convert: "str"
+    default: ""
+  integer:
+    convert: "int"
+    default: 0
+  float:
+    convert: "float"
+    default: 0.0
+  percentage:
+    convert: "float"
+    format: "0.00"
+    default: 0.0
+    note: "Stored as decimal (0.25 = 25%)"
+  year:
+    convert: "int"
+    format: "4 digits"
+    default: 2025
+
+# ==================================================================
+# VALIDACIÓN
+# ==================================================================
+validation:
+  # Calcular cantidad de productos automáticamente
+  count_products_automatically: true
+  
+  # Validar años
+  validate_years:
+    min: 2000
+    max: 2100
+  
+  # Validar porcentajes
+  validate_percentages:
+    min: 0
+    max: 1  # Decimal format
+  
+  # Validar monedas permitidas
+  allowed_currencies:
+    - "Bs"
+    - "USD"
+    - "PEN"

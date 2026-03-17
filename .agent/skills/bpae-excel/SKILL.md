@@ -1,172 +1,444 @@
 ---
 name: bpae-excel
 description: >
-  Manejo de archivos Excel para Business Plan Automation Engine usando openpyxl.
+  Manejo dinámico de archivos Excel para Business Plan Automation Engine.
+  Soporta múltiples versiones de plantilla y escalado a planes de negocio complejos.
   Trigger: When working with Excel files, reading templates, writing data, or manipulating cells.
 license: Apache-2.0
 metadata:
   author: gentleman-programming
-  version: "1.0"
+  version: "2.0"
 ---
 
 ## When to Use
 
-- Reading client Excel files (plantilla_1.xlsx)
+- Reading client Excel files (any template version)
 - Writing data to Excel templates
 - Extracting data from specific cells
 - Generating master Excel files
 - Working with openpyxl library
+- Adding new sections/tables to templates
+
+## Architecture Overview
+
+### Template Versioning
+
+```
+templates/
+├── v1/
+│   └── plantilla_1.xlsx          # Current: Simple template
+├── v2/
+│   └── plantilla_2.xlsx          # Future: More tables
+└── v3/
+    └── plantilla_completa.xlsx   # Future: Full business plan
+```
+
+### Configuration-Driven Cell Mapping
+
+Instead of hardcoding cells, use configuration:
+
+```python
+# In config/excel_templates.yaml
+
+templates:
+  v1:
+    name: "plantilla_1"
+    description: "Simple template - Phase 1"
+    sheet: "INICIO"
+    
+    sections:
+      parametros_globales:
+        start_row: 4
+        end_row: 16
+        columns:
+          label: "A"
+          value: "B"
+        fields:
+          - nombre
+          - rubro
+          - ciudad
+          - departamento
+          - pais
+          - moneda
+          - tipo_cambio
+          - inflacion
+          - horizonte
+          - anio_base
+          - anio_inicio
+          - impuesto_iue
+          - impuesto_it
+        required:
+          - nombre
+          - rubro
+          - ciudad
+      
+      productos_servicios:
+        header_row: 19
+        data_start_row: 20
+        data_end_row: 29
+        columns:
+          numero: "A"
+          nombre: "B"
+          unidad: "C"
+          peso: "D"
+        required:
+          - nombre
+  
+  v2:
+    name: "plantilla_2"
+    description: "Expanded template - Phase 2"
+    # ... additional sections
+```
 
 ## Critical Patterns
 
-### Template Structure (FIXED)
+### 1. Dynamic Template Loader
 
-**Hoja: INICIO**
+```python
+from pathlib import Path
+from typing import Dict, Any, List
+import yaml
 
+class TemplateConfig:
+    """Loads template configuration from YAML."""
+    
+    def __init__(self, config_path: Path):
+        with open(config_path) as f:
+            self.config = yaml.safe_load(f)
+    
+    def get_template(self, version: str = "v1") -> Dict[str, Any]:
+        """Get template configuration for a specific version."""
+        return self.config["templates"].get(version)
+    
+    def get_section(self, version: str, section: str) -> Dict[str, Any]:
+        """Get a specific section configuration."""
+        template = self.get_template(version)
+        return template["sections"].get(section)
+    
+    def get_required_fields(self, version: str, section: str) -> List[str]:
+        """Get required fields for a section."""
+        section_config = self.get_section(version, section)
+        return section_config.get("required", [])
 ```
-A1: PLAN DE NEGOCIO (title, no modificar)
 
-PARÁMETROS GLOBALES (A3:B16):
-A4-B4: Nombre del Proyecto      (OBLIGATORIO)
-A5-B5: Rubro / Sector           (OBLIGATORIO)
-A6-B6: Ciudad                   (OBLIGATORIO)
-A7-B7: Departamento
-A8-B8: País
-A9-B9: Moneda
-A10-B10: Tipo de Cambio (Bs/$us)
-A11-B11: Tasa de Inflación Anual
-A12-B12: Horizonte de Proyección
-A13-B13: Año Base
-A14-B14: Año Inicio Operaciones
-A15-B15: Impuesto IUE (%)
-A16-B16: Impuesto IT (%)
-
-PRODUCTOS / SERVICIOS (A18:D29):
-A19: N° | B19: Nombre | C19: Unidad | D19: Peso
-A20-D20: Producto 1
-A21-D21: Producto 2
-...
-A29-D29: Producto 10
-```
-
-### Reading Excel
+### 2. Generic Excel Reader
 
 ```python
 from openpyxl import load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
-# NEVER modify template structure
-wb = load_workbook(file_path, data_only=True)
-ws = wb["INICIO"]  # Always use this sheet
-
-# Read specific cells
-nombre = ws["B4"].value      # Nombre del Proyecto
-rubro = ws["B5"].value       # Rubro
-ciudad = ws["B6"].value       # Ciudad
-
-# Read products (rows 20-29)
-productos = []
-for fila in range(20, 30):
-    nombre = ws[f"B{fila}"].value
-    if nombre:  # Only if not empty
-        productos.append({
-            "nombre": nombre,
-            "unidad": ws[f"C{fila}"].value or "Gramos",
-            "peso": ws[f"D{fila}"].value or 125.0
-        })
+class ExcelReader:
+    """Generic Excel reader that works with any template version."""
+    
+    def __init__(self, template_config: TemplateConfig):
+        self.config = template_config
+    
+    def read_section(
+        self, 
+        ws: Worksheet, 
+        version: str, 
+        section: str
+    ) -> Dict[str, Any]:
+        """
+        Read a section from worksheet using configuration.
+        
+        Works with any template version and any section.
+        """
+        section_config = self.config.get_section(version, section)
+        
+        if section_config.get("header_row"):
+            # Table format (like productos_servicios)
+            return self._read_table(ws, section_config)
+        else:
+            # Key-value format (like parametros_globales)
+            return self._read_key_value(ws, section_config)
+    
+    def _read_key_value(
+        self, 
+        ws: Worksheet, 
+        config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Read key-value pairs (parameters section)."""
+        result = {}
+        
+        start = config["start_row"]
+        end = config["end_row"]
+        label_col = config["columns"]["label"]
+        value_col = config["columns"]["value"]
+        
+        for i, field in enumerate(config["fields"]):
+            row = start + i
+            value = ws[f"{value_col}{row}"].value
+            result[field] = self._convert_value(value, field)
+        
+        return result
+    
+    def _read_table(
+        self, 
+        ws: Worksheet, 
+        config: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Read table data (products section)."""
+        result = []
+        
+        start = config["data_start_row"]
+        end = config["data_end_row"]
+        cols = config["columns"]
+        
+        for row in range(start, end + 1):
+            row_data = {}
+            has_data = False
+            
+            for field, col in cols.items():
+                value = ws[f"{col}{row}"].value
+                row_data[field] = self._convert_value(value, field)
+                if value is not None:
+                    has_data = True
+            
+            if has_data:
+                result.append(row_data)
+        
+        return result
+    
+    def _convert_value(self, value: Any, field: str) -> Any:
+        """Convert value to appropriate type."""
+        if value is None:
+            return None
+        
+        # Percentage fields
+        if field in ["inflacion", "impuesto_iue", "impuesto_it"]:
+            return float(value) if isinstance(value, (int, float)) else None
+        
+        # Year fields
+        if field in ["anio_base", "anio_inicio", "horizonte"]:
+            return int(value) if isinstance(value, (int, float)) else None
+        
+        # Float fields
+        if field in ["tipo_cambio", "peso"]:
+            return float(value) if isinstance(value, (int, float)) else None
+        
+        # String fields
+        return str(value).strip() if value else None
 ```
 
-### Writing Excel
+### 3. Generic Excel Writer
 
 ```python
-from openpyxl import Workbook
-
-wb = Workbook()
-ws = wb.active
-ws.title = "INICIO"
-
-# Write parameters (column B)
-ws["B4"] = "Shawarma Cruz"
-ws["B5"] = "Restaurant"
-ws["B6"] = "Santa Cruz de la Sierra"
-# ... etc
-
-# Write products (rows 20-29)
-for i, prod in enumerate(productos):
-    fila = 20 + i
-    ws[f"A{fila}"] = i + 1
-    ws[f"B{fila}"] = prod.nombre
-    ws[f"C{fila}"] = prod.unidad_medida
-    ws[f"D{fila}"] = prod.peso_volumen
-
-wb.save(output_path)
+class ExcelWriter:
+    """Generic Excel writer that works with any template version."""
+    
+    def write_section(
+        self,
+        ws: Worksheet,
+        version: str,
+        section: str,
+        data: Any
+    ) -> None:
+        """
+        Write a section to worksheet using configuration.
+        
+        Automatically determines format (key-value or table).
+        """
+        section_config = self.config.get_section(version, section)
+        
+        if section_config.get("header_row"):
+            # Table format
+            self._write_table(ws, section_config, data)
+        else:
+            # Key-value format
+            self._write_key_value(ws, section_config, data)
+    
+    def _write_key_value(
+        self,
+        ws: Worksheet,
+        config: Dict[str, Any],
+        data: Dict[str, Any]
+    ) -> None:
+        """Write key-value pairs."""
+        start = config["start_row"]
+        value_col = config["columns"]["value"]
+        
+        for i, field in enumerate(config["fields"]):
+            row = start + i
+            value = data.get(field)
+            if value is not None:
+                ws[f"{value_col}{row}"] = value
+    
+    def _write_table(
+        self,
+        ws: Worksheet,
+        config: Dict[str, Any],
+        data: List[Dict[str, Any]]
+    ) -> None:
+        """Write table data."""
+        start = config["data_start_row"]
+        cols = config["columns"]
+        
+        for i, row_data in enumerate(data):
+            row = start + i
+            for field, col in cols.items():
+                value = row_data.get(field)
+                if value is not None:
+                    ws[f"{col}{row}"] = value
 ```
 
-### Data Types
+## Adding New Template Versions
 
-| Field | Type | Format |
-|-------|------|--------|
-| Nombre | str | Text |
-| Tipo de Cambio | float | Decimal (6.96) |
-| Porcentajes | float | Decimal (0.25 = 25%) |
-| Años | int | 4 digits (2025) |
-| Horizonte | int | Years (5) |
+### Step 1: Create Template Configuration
 
-**CRITICAL**: Porcentajes como decimales, NO como "25%"
+Add new version to `config/excel_templates.yaml`:
 
-### Validation
-
-```python
-# Required fields
-CAMPOS_OBLIGATORIOS = ["nombre", "rubro", "ciudad"]
-
-# Validate before processing
-for campo in CAMPOS_OBLIGATORIOS:
-    if not ws[f"B{4 + campos.index(campo)}"].value:
-        raise ValidationError(f"Campo obligatorio faltante: {campo}")
+```yaml
+templates:
+  v2:
+    name: "plantilla_2"
+    description: "Expanded template - Phase 2"
+    sheet: "INICIO"
+    
+    sections:
+      parametros_globales:
+        # Same as v1...
+        
+      productos_servicios:
+        # Same as v1...
+      
+      # NEW SECTION
+      analisis_mercado:
+        header_row: 32
+        data_start_row: 33
+        data_end_row: 50
+        columns:
+          aspecto: "A"
+          descripcion: "B"
+          valoracion: "C"
+        required:
+          - aspecto
 ```
 
-### Cell Mapping Reference
+### Step 2: Create Template File
+
+Create the actual Excel file in `templates/v2/plantilla_2.xlsx`.
+
+### Step 3: Use New Version
 
 ```python
-CELDAS_PARAMETROS = {
-    "nombre": "B4",
-    "rubro": "B5",
-    "ciudad": "B6",
-    "departamento": "B7",
-    "pais": "B8",
-    "moneda": "B9",
-    "tipo_cambio": "B10",
-    "inflacion": "B11",
-    "horizonte": "B12",
-    "anio_base": "B13",
-    "anio_inicio": "B14",
-    "impuesto_iue": "B15",
-    "impuesto_it": "B16"
-}
+reader = ExcelReader(template_config)
+reader.set_version("v2")
+data = reader.read_section(ws, "analisis_mercado")
+```
+
+## Extending for Complex Business Plans
+
+### Future Structure (v3+)
+
+```yaml
+templates:
+  v3:
+    sheet: "INICIO"
+    sections:
+      # Basic
+      - parametros_globales
+      - productos_servicios
+      
+      # Market Analysis
+      - analisis_pestel
+      - analisis_porter
+      - analisis_foda
+      
+      # Financial
+      - inversion_inicial
+      - estructura_costos
+      - flujo_caja
+      - indicadores_rentabilidad
+      
+      # Operations
+      - capacidad_instalada
+      - mano_obra
+      - activos_fijos
+```
+
+## Validation Pattern
+
+```python
+class ExcelValidator:
+    """Validate Excel data against template configuration."""
+    
+    def validate(
+        self,
+        version: str,
+        section: str,
+        data: Any
+    ) -> List[str]:
+        """Return list of validation errors."""
+        errors = []
+        required = self.config.get_required_fields(version, section)
+        
+        if isinstance(data, dict):
+            # Key-value validation
+            for field in required:
+                if field not in data or data[field] is None:
+                    errors.append(f"Campo requerido faltante: {field}")
+        
+        elif isinstance(data, list):
+            # Table validation
+            for i, row in enumerate(data):
+                for field in required:
+                    if field not in row or row[field] is None:
+                        errors.append(f"Fila {i+1}: campo '{field}' faltante")
+        
+        return errors
 ```
 
 ## Commands
 
 ```bash
-# Install openpyxl
-pip install openpyxl
+# Install dependencies
+pip install openpyxl pyyaml
 
-# Read Excel
-python -c "from openpyxl import load_workbook; wb = load_workbook('file.xlsx'); print(wb.sheetnames)"
+# Create template config
+python -c "from services.template_config import create_default_config; create_default_config('config/excel_templates.yaml')"
+
+# Validate template
+python -c "from services.excel_reader import ExcelReader; r = ExcelReader(); r.validate_template('v1')"
 ```
 
 ## Resources
 
 - **Template Map**: See [docs/plantilla_1_mapa.md](../../docs/plantilla_1_mapa.md)
 - **Example**: See [docs/plantilla_1_ejemplo_rellenado.md](../../docs/plantilla_1_ejemplo_rellenado.md)
+- **Config**: Will be in `config/excel_templates.yaml` (create as needed)
 - **Service**: See [apps/api/services/excel_service.py](../apps/api/services/excel_service.py)
 
 ## Golden Rules
 
-1. **NEVER** modify template structure (column A labels, row 19 headers)
-2. **ALWAYS** use hoja "INICIO"
-3. **ALWAYS** validate required fields before processing
-4. **PORCENTAJES** as decimals (0.25), not strings ("25%")
-5. **YEARS** as 4-digit integers (2025), not 2-digit
-6. **CLOSE** workbook after reading: `wb.close()`
-7. **USE** `data_only=True` to read calculated values
+1. **NEVER** hardcode cell references - use configuration
+2. **ALWAYS** load template config from YAML
+3. **SUPPORT** multiple versions via `version` parameter
+4. **VALIDATE** required fields before processing
+5. **CONVERT** types (percentage, year, float) automatically
+6. **EXTEND** by adding new sections to config, not to code
+7. **CLOSE** workbook after reading: `wb.close()`
+8. **USE** `data_only=True` to read calculated values
+
+## Migration Guide
+
+### From v1 (hardcoded) to v2 (config-driven):
+
+```python
+# OLD (hardcoded)
+nombre = ws["B4"].value
+rubro = ws["B5"].value
+
+# NEW (config-driven)
+template_config = TemplateConfig("config/excel_templates.yaml")
+reader = ExcelReader(template_config)
+params = reader.read_section(ws, "v1", "parametros_globales")
+nombre = params["nombre"]
+rubro = params["rubro"]
+```
+
+### Benefits:
+- Easy to add new sections without code changes
+- Support for multiple template versions
+- Automatic type conversion
+- Built-in validation
