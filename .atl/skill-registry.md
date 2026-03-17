@@ -9,6 +9,8 @@
 | bpae-context | Always load when working on Business Plan Automation Engine | `.agent/skills/bpae-context/SKILL.md` |
 | bpae-fastapi | When writing FastAPI endpoints, routers, or API-related code | `.agent/skills/bpae-fastapi/SKILL.md` |
 | bpae-supabase | When working with Supabase queries, tables, or database operations | `.agent/skills/bpae-supabase/SKILL.md` |
+| bpae-excel | When working with Excel files, reading templates, writing data | `.agent/skills/bpae-excel/SKILL.md` |
+| bpae-word | When generating Word documents, creating business plans | `.agent/skills/bpae-word/SKILL.md` |
 
 ## Project Conventions
 
@@ -39,10 +41,14 @@ When working on this project, AI agents should:
 1. **Always load `bpae-context`** first for project-wide context
 2. **Load `bpae-fastapi`** when creating/modifying API endpoints
 3. **Load `bpae-supabase`** when working with database operations
+4. **Load `bpae-excel`** when manipulating Excel templates or extracting data
+5. **Load `bpae-word`** when generating Word documents from Excel data
 
 ## Notes
 
-- Project is in early stage (documentation only, no code yet)
-- Frontend technology decision pending: Skill mentions Streamlit, user wants Next.js
-- Architecture document describes multi-agent system with Bronze/Silver/Gold data layers
-- Current focus: Experimentation with simple Excel template, iteration toward full system
+- Project structure: FastAPI backend + Next.js frontend
+- Template: plantilla_1.xlsx with fixed structure (INICIO sheet)
+- Required fields: nombre (B4), rubro (B5), ciudad (B6)
+- Products: rows 20-29, columns A-D (N°, Nombre, Unidad, Peso)
+- Database: SQLite + SQLModel with 11 tables
+- See docs/plantilla_1_mapa.md for complete cell reference
