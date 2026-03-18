@@ -112,6 +112,48 @@ def load_bronze_df(survey_id: int) -> pd.DataFrame:
     return df.sort_index()
 
 
+def load_bronze_df_named(survey_id: int) -> pd.DataFrame:
+    """
+    Carga los datos brutos de SQLite como DataFrame con columnas "N. texto_pregunta".
+
+    A diferencia de load_bronze_df() (que usa columnas "p1..pN"),
+    esta función reconstruye los nombres de columna desde SurveyVariable,
+    retornando un DataFrame compatible con build_silver().
+
+    Retorna DataFrame con columnas "1. ¿Qué edad tiene?", "2. ¿Cuál es su género?", ...
+    """
+    from models.db.survey import SurveyVariable
+
+    db = get_database()
+    with db.get_session() as session:
+        resp_stmt = select(SurveyResponse).where(SurveyResponse.survey_id == survey_id)
+        responses = session.exec(resp_stmt).all()
+
+        var_stmt = select(SurveyVariable).where(SurveyVariable.survey_id == survey_id)
+        variables = session.exec(var_stmt).all()
+
+    if not responses:
+        return pd.DataFrame()
+
+    # Mapeo q_num → "N. texto_pregunta" (excluir entradas __bi__:)
+    col_map: Dict[int, str] = {
+        v.pregunta_num: f"{v.pregunta_num}. {v.texto_pregunta}"
+        for v in variables
+        if not v.nombre_variable.startswith("__bi__:")
+    }
+
+    data: Dict = {}
+    for resp in responses:
+        if resp.respondente_num not in data:
+            data[resp.respondente_num] = {}
+        col_name = col_map.get(resp.pregunta_num, f"{resp.pregunta_num}. Pregunta {resp.pregunta_num}")
+        data[resp.respondente_num][col_name] = resp.valor_raw
+
+    df = pd.DataFrame.from_dict(data, orient="index")
+    df.index.name = "respondente_num"
+    return df.sort_index()
+
+
 def extract_question_texts(df_raw: pd.DataFrame) -> Dict[int, str]:
     """
     Extrae el texto de las preguntas desde los headers del DataFrame.

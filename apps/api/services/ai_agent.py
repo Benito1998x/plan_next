@@ -11,7 +11,7 @@ Providers:
 import json
 import os
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 from dotenv import load_dotenv, find_dotenv
 
 # Busca .env subiendo desde el directorio actual (cubre project root)
@@ -118,6 +118,99 @@ VARIABLE_SCHEMA = {
         "required": ["variables"]
     }
 }
+
+# ─── Schema para clasificación estadística dinámica de variables ──────────────
+ANALYZE_VARIABLES_SCHEMA = {
+    "name": "analizar_variables_encuesta",
+    "description": (
+        "Analiza preguntas de encuesta y determina el tipo estadístico de cada variable "
+        "junto con los valores numéricos implícitos en sus opciones. "
+        "El sistema es dinámico: no asume qué pregunta es frecuencia o precio."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "variables": {
+                "type": "array",
+                "description": "Un elemento por pregunta analizada",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "numero": {
+                            "type": "integer",
+                            "description": "Número de la pregunta",
+                        },
+                        "variable": {
+                            "type": "string",
+                            "description": "Nombre corto de la variable (1-3 palabras)",
+                        },
+                        "tipo": {
+                            "type": "string",
+                            "enum": ["nominal", "ordinal", "ordinal_likert", "cuantitativa"],
+                            "description": (
+                                "nominal: categorías sin orden. "
+                                "ordinal: categorías con orden natural. "
+                                "ordinal_likert: escala de acuerdo/satisfacción. "
+                                "cuantitativa: opciones con valor numérico extraíble (frecuencias temporales, precios, cantidades)."
+                            ),
+                        },
+                        "conversiones": {
+                            "type": "object",
+                            "description": (
+                                "SOLO para tipo cuantitativa u ordinal_likert: "
+                                "mapeo {label_opción: valor_numérico}. "
+                                "Para frecuencias: convertir a escala anual (Diario→365, Semanal→52, Mensual→12, etc). "
+                                "Para precios/montos en intervalos: usar midpoint ((min+max)/2). "
+                                "Para intervalos abiertos 'Menos de X': usar X*0.75. "
+                                "Para 'Más de X': usar X*1.20. "
+                                "Para Likert de N opciones: asignar N, N-1, ..., 1 en orden de positividad. "
+                                "null si no aplica (nominal, ordinal)."
+                            ),
+                            "additionalProperties": {"type": "number"},
+                            "nullable": True,
+                        },
+                        "unidad": {
+                            "type": "string",
+                            "description": (
+                                "Unidad de medida del valor numérico. "
+                                "Ejemplos: 'visitas/año', 'Bs.', 'unidades', 'score 1-5'. "
+                                "null si no aplica."
+                            ),
+                            "nullable": True,
+                        },
+                        "interpretacion": {
+                            "type": "string",
+                            "description": (
+                                "Frase de 1-2 oraciones sobre qué mide esta variable "
+                                "y su importancia para un plan de negocio."
+                            ),
+                        },
+                    },
+                    "required": ["numero", "variable", "tipo", "interpretacion"],
+                },
+            }
+        },
+        "required": ["variables"],
+    },
+}
+
+ANALYZE_VARIABLES_SYSTEM_PROMPT = """Eres un experto en Business Intelligence y Estadística aplicada a planes de negocio.
+
+Tu tarea es analizar preguntas de una encuesta de mercado e identificar:
+1. El tipo estadístico de cada variable (nominal, ordinal, ordinal_likert, cuantitativa)
+2. Los valores numéricos implícitos en las opciones de respuesta (para variables cuantitativas)
+
+Reglas críticas:
+- Sé DINÁMICO: no asumas que una pregunta es de frecuencia o precio por su número.
+  Lee el texto de la pregunta y sus opciones para determinarlo.
+- Para FRECUENCIAS TEMPORALES ("Diariamente", "Semanal", etc.): convertir a escala ANUAL.
+  Diario=365, 2-3/semana=130, 1/semana=52, 2/mes=24, 1/mes=12, Nunca=0.
+- Para INTERVALOS DE PRECIO/MONTO: calcular el midpoint.
+  "Bs. 21 a 35" → 28.0. "Menos de X" → X×0.75. "Más de X" → X×1.20.
+- Para LIKERT: asignar scores descendentes empezando en N (más positivo) hasta 1 (más negativo).
+- "Conocimiento del mercado", "Familiaridad con el producto" → ORDINAL (no cuantitativa).
+- En caso de duda → clasificar como NOMINAL (opción conservadora).
+- Responde SIEMPRE usando la función analizar_variables_encuesta."""
 
 VARIABLE_SYSTEM_PROMPT = """Eres un experto en investigación de mercado y estadística descriptiva.
 Dado el texto de preguntas de una encuesta, infiere el nombre corto de la variable estadística que representa cada pregunta.
@@ -339,6 +432,240 @@ class AIAgent:
         if error:
             result["_agent_error"] = error
         return result
+
+    def analyze_survey_variables(
+        self,
+        questions: Dict[int, Dict[str, Any]],
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Analiza dinámicamente las variables de una encuesta.
+
+        Determina el tipo estadístico de cada variable y extrae los valores
+        numéricos implícitos en las opciones (sin mapeos hardcodeados).
+
+        Args:
+            questions: {
+                q_num: {
+                    "texto_pregunta": str,
+                    "opciones": [str, ...]   # labels ya limpiados (sin prefijos a)/b))
+                }
+            }
+
+        Returns:
+            {
+                q_num: {
+                    "variable":      str,   # nombre corto
+                    "tipo":          str,   # nominal/ordinal/ordinal_likert/cuantitativa
+                    "conversiones":  dict | None,  # {label: float}
+                    "unidad":        str | None,
+                    "interpretacion": str,
+                }
+            }
+        """
+        if not questions:
+            return {}
+
+        if self.provider == "openai":
+            result = self._analyze_variables_openai(questions)
+        elif self.provider == "minimax":
+            result = self._analyze_variables_minimax(questions)
+        else:
+            result = {}
+
+        # Fallback: si el LLM falla o no retorna todas las preguntas
+        for q_num in questions:
+            if q_num not in result:
+                result[q_num] = self._fallback_variable_analysis(
+                    q_num, questions[q_num]
+                )
+        return result
+
+    def _build_analyze_message(self, questions: Dict[int, Dict]) -> str:
+        """Construye el mensaje para el análisis de variables."""
+        lines = []
+        for q_num in sorted(questions.keys()):
+            q = questions[q_num]
+            texto = q.get("texto_pregunta", f"Pregunta {q_num}")
+            opciones = q.get("opciones", [])
+            opciones_str = " | ".join(opciones) if opciones else "(sin opciones)"
+            lines.append(f"Pregunta {q_num}: {texto}\nOpciones: {opciones_str}")
+        return "\n\n".join(lines)
+
+    def _parse_analyze_response(self, tool_call) -> Dict[int, Dict]:
+        """Parsea la respuesta de analizar_variables_encuesta."""
+        variables_list = json.loads(tool_call.function.arguments).get("variables", [])
+        result = {}
+        for item in variables_list:
+            q_num = item["numero"]
+            result[q_num] = {
+                "variable":      item.get("variable", f"Variable {q_num}"),
+                "tipo":          item.get("tipo", "nominal"),
+                "conversiones":  item.get("conversiones"),
+                "unidad":        item.get("unidad"),
+                "interpretacion": item.get("interpretacion", ""),
+            }
+        return result
+
+    def _analyze_variables_openai(self, questions: Dict[int, Dict]) -> Dict[int, Dict]:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            kwargs = dict(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": ANALYZE_VARIABLES_SYSTEM_PROMPT},
+                    {"role": "user", "content": self._build_analyze_message(questions)},
+                ],
+                tools=[{"type": "function", "function": ANALYZE_VARIABLES_SCHEMA}],
+                tool_choice={"type": "function", "function": {"name": "analizar_variables_encuesta"}},
+            )
+            try:
+                response = client.chat.completions.create(**kwargs, temperature=0.1)
+            except Exception:
+                response = client.chat.completions.create(**kwargs)
+            return self._parse_analyze_response(response.choices[0].message.tool_calls[0])
+        except Exception:
+            return {}
+
+    def _analyze_variables_minimax(self, questions: Dict[int, Dict]) -> Dict[int, Dict]:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=os.getenv("MINIMAX_API_KEY"),
+                base_url="https://api.minimax.chat/v1",
+            )
+            kwargs = dict(
+                model=os.getenv("MINIMAX_MODEL", "MiniMax-Text-01"),
+                messages=[
+                    {"role": "system", "content": ANALYZE_VARIABLES_SYSTEM_PROMPT},
+                    {"role": "user", "content": self._build_analyze_message(questions)},
+                ],
+                tools=[{"type": "function", "function": ANALYZE_VARIABLES_SCHEMA}],
+                tool_choice={"type": "function", "function": {"name": "analizar_variables_encuesta"}},
+            )
+            try:
+                response = client.chat.completions.create(**kwargs, temperature=0.1)
+            except Exception:
+                response = client.chat.completions.create(**kwargs)
+            return self._parse_analyze_response(response.choices[0].message.tool_calls[0])
+        except Exception:
+            return {}
+
+    def _fallback_variable_analysis(
+        self, q_num: int, q_data: Dict
+    ) -> Dict[str, Any]:
+        """
+        Fallback sin IA: heurísticas simples basadas en texto de opciones.
+
+        Detecta patrones comunes sin depender del LLM.
+        """
+        import re
+        texto = q_data.get("texto_pregunta", "").lower()
+        opciones = q_data.get("opciones", [])
+
+        # Detectar frecuencias temporales
+        freq_keywords = ["diario", "semanal", "mensual", "diariamente", "semana", "mes", "vez al"]
+        if any(k in " ".join(opciones).lower() for k in freq_keywords):
+            conversiones = self._extract_frequency_conversions(opciones)
+            return {
+                "variable": "Frecuencia",
+                "tipo": "cuantitativa",
+                "conversiones": conversiones,
+                "unidad": "visitas/año",
+                "interpretacion": "Intensidad de consumo anualizada.",
+            }
+
+        # Detectar precios/montos (busca patrones como "Bs." o "$" + números)
+        price_pattern = re.compile(r"(?:bs\.?|\\$|usd)?\s*\d+", re.IGNORECASE)
+        if sum(1 for o in opciones if price_pattern.search(o)) >= len(opciones) // 2:
+            conversiones = self._extract_midpoint_conversions(opciones)
+            moneda = "Bs." if any("bs" in o.lower() for o in opciones) else "unidades"
+            return {
+                "variable": "Precio" if "pag" in texto or "precio" in texto else "Monto",
+                "tipo": "cuantitativa",
+                "conversiones": conversiones,
+                "unidad": moneda,
+                "interpretacion": "Variable monetaria cuantificada por midpoints de intervalos.",
+            }
+
+        # Detectar Likert (opciones como excelente/muy bueno/bueno o satisfecho/...)
+        likert_keywords = ["excelente", "muy bueno", "satisfecho", "acuerdo", "probable"]
+        if any(k in " ".join(opciones).lower() for k in likert_keywords):
+            conversiones = {o: len(opciones) - i for i, o in enumerate(opciones)}
+            return {
+                "variable": "Aceptación" if "acept" in texto else "Satisfacción",
+                "tipo": "ordinal_likert",
+                "conversiones": conversiones,
+                "unidad": f"score 1-{len(opciones)}",
+                "interpretacion": "Escala Likert de actitud.",
+            }
+
+        # Default: nominal
+        return {
+            "variable": f"Variable {q_num}",
+            "tipo": "nominal",
+            "conversiones": None,
+            "unidad": None,
+            "interpretacion": "Variable categórica nominal.",
+        }
+
+    def _extract_frequency_conversions(self, opciones: List[str]) -> Dict[str, float]:
+        """Extrae conversiones anuales desde opciones de frecuencia textual."""
+        import re
+        mapping = {}
+        annual_map = [
+            (r"diari|todos los d[ií]as", 365),
+            (r"2\s*[a-z]*\s*3|dos\s+o\s+tres|2-3", 130),
+            (r"una?\s+vez\s+a\s+la\s+semana|semanal(?!mente)|1\s*vez\s*/?\s*semana", 52),
+            (r"quincen|cada\s+15|dos\s+veces\s+al\s+mes|2\s*veces\s*al\s*mes", 24),
+            (r"una?\s+vez\s+al\s+mes|mensual|1\s*vez\s*/?\s*mes", 12),
+            (r"bimestral|cada\s+2\s+meses", 6),
+            (r"trimestral|cada\s+3\s+meses", 4),
+            (r"semestral|cada\s+6\s+meses", 2),
+            (r"anual|una?\s+vez\s+al\s+a[ñn]o", 1),
+            (r"nunca|no\s+consumo|no\s+aplica", 0),
+        ]
+        for opcion in opciones:
+            matched = False
+            for pattern, value in annual_map:
+                if re.search(pattern, opcion.lower()):
+                    mapping[opcion] = float(value)
+                    matched = True
+                    break
+            if not matched:
+                mapping[opcion] = 0.0
+        return mapping
+
+    def _extract_midpoint_conversions(self, opciones: List[str]) -> Dict[str, float]:
+        """Extrae midpoints de intervalos numéricos en las opciones."""
+        import re
+        mapping = {}
+        for opcion in opciones:
+            # Intervalo cerrado: "21 a 35", "21-35", "21 - 35"
+            m = re.search(r"(\d+(?:\.\d+)?)\s*(?:a|al?|-)\s*(\d+(?:\.\d+)?)", opcion)
+            if m:
+                lo, hi = float(m.group(1)), float(m.group(2))
+                mapping[opcion] = (lo + hi) / 2
+                continue
+            # Abierto inferior: "Menos de X", "< X"
+            m = re.search(r"(?:menos\s+de|<)\s*(\d+(?:\.\d+)?)", opcion, re.IGNORECASE)
+            if m:
+                x = float(m.group(1))
+                mapping[opcion] = round(x * 0.75, 2)
+                continue
+            # Abierto superior: "Más de X", "> X"
+            m = re.search(r"(?:m[aá]s\s+de|>)\s*(\d+(?:\.\d+)?)", opcion, re.IGNORECASE)
+            if m:
+                x = float(m.group(1))
+                mapping[opcion] = round(x * 1.20, 2)
+                continue
+            # Número solo
+            m = re.search(r"(\d+(?:\.\d+)?)", opcion)
+            if m:
+                mapping[opcion] = float(m.group(1))
+                continue
+            mapping[opcion] = 0.0
+        return mapping
 
     def infer_variable_names(self, question_texts: Dict[int, str]) -> Dict[int, str]:
         """

@@ -53,12 +53,15 @@ async def process_sprint3(request: Sprint3Request):
             output_dir=_OUTPUT_DIR,
         )
         return {
-            "status":        "ok",
-            "survey_id":     result["survey_id"],
-            "plan_id":       result["plan_id"],
-            "n_indicadores": result["n_indicadores"],
-            "summary":       result["summary"],
-            "indicadores":   result["indicadores"],
+            "status":          "ok",
+            "survey_id":       result["survey_id"],
+            "plan_id":         result["plan_id"],
+            "n_total":         result["n_total"],
+            "n_segmento":      result["n_segmento"],
+            "n_indicadores":   result["n_indicadores"],
+            "filtros_aplicados": result["filtros_aplicados"],
+            "advertencias":    result["advertencias"],
+            "indicadores":     result["indicadores"],
             "downloads": {
                 "excel": f"/api/v1/sprint3/download/{request.survey_id}/excel",
                 "word":  f"/api/v1/sprint3/download/{request.survey_id}/word",
