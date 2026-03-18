@@ -78,6 +78,8 @@ class WordService:
         productos: List[Dict[str, Any]],
         output_path: Path,
         title: Optional[str] = None,
+        datos_negocio: Optional[Dict[str, Any]] = None,
+        buyer_persona: Optional[Dict[str, Any]] = None,
     ) -> Path:
         """
         Genera documento Word desde datos extraídos de Excel.
@@ -117,6 +119,18 @@ class WordService:
             # ===== SECCIÓN 2: PRODUCTOS / SERVICIOS =====
             self._add_section_title(doc, "2. Productos / Servicios")
             self._add_products_table(doc, productos)
+
+            # ===== SECCIÓN 3: DATOS DEL NEGOCIO =====
+            if datos_negocio and any(v for v in datos_negocio.values() if v is not None):
+                doc.add_paragraph()
+                self._add_section_title(doc, "3. Datos del Negocio")
+                self._add_datos_negocio_table(doc, datos_negocio)
+
+            # ===== SECCIÓN 4: BUYER PERSONA =====
+            if buyer_persona and any(v for v in buyer_persona.values() if v is not None):
+                doc.add_paragraph()
+                self._add_section_title(doc, "4. Buyer Persona / Segmentación")
+                self._add_buyer_persona_table(doc, buyer_persona)
 
             # Guardar documento
             doc.save(output_path)
@@ -255,6 +269,56 @@ class WordService:
         table.columns[1].width = Inches(2.5)
         table.columns[2].width = Inches(1.5)
         table.columns[3].width = Inches(1.5)
+
+    def _add_datos_negocio_table(self, doc: Document, datos_negocio: Dict[str, Any]) -> None:
+        """Agrega tabla de datos operativos del negocio."""
+        fields = [
+            ("horario_atencion", "Horario de Atención"),
+            ("zona_direccion",   "Zona / Dirección"),
+            ("canal_venta",      "Canal de Venta"),
+            ("capacidad_diaria", "Capacidad Diaria (unidades)"),
+        ]
+        rows = [(label, datos_negocio.get(key)) for key, label in fields if datos_negocio.get(key) is not None]
+        if not rows:
+            return
+
+        table = doc.add_table(rows=len(rows), cols=2)
+        table.style = "Normal Table"
+        _add_table_borders(table)
+        for i, (label, value) in enumerate(rows):
+            row = table.rows[i]
+            row.cells[0].text = label
+            row.cells[0].paragraphs[0].runs[0].bold = True
+            row.cells[1].text = str(value)
+        table.columns[0].width = Inches(2.5)
+        table.columns[1].width = Inches(3.5)
+
+    def _add_buyer_persona_table(self, doc: Document, buyer_persona: Dict[str, Any]) -> None:
+        """Agrega tabla de buyer persona / segmentación."""
+        fields = [
+            ("edad_objetivo",            "Edad Objetivo"),
+            ("genero_objetivo",          "Género Objetivo"),
+            ("ocupacion_principal",      "Ocupación Principal"),
+            ("zona_residencia_objetivo", "Zona de Residencia Objetivo"),
+            ("motivaciones_compra",      "Motivaciones de Compra"),
+            ("canal_informacion",        "Canal de Información Preferido"),
+            ("nivel_socioeconomico",     "Nivel Socioeconómico (NSE)"),
+        ]
+        rows = [(label, buyer_persona.get(key)) for key, label in fields if buyer_persona.get(key) is not None]
+        if not rows:
+            return
+
+        table = doc.add_table(rows=len(rows), cols=2)
+        table.style = "Normal Table"
+        _add_table_borders(table)
+        for i, (label, value) in enumerate(rows):
+            row = table.rows[i]
+            row.cells[0].text = label
+            row.cells[0].paragraphs[0].runs[0].bold = True
+            row.cells[1].text = str(value)
+            self._set_cell_shading(row.cells[0], "E8F0FE")
+        table.columns[0].width = Inches(2.5)
+        table.columns[1].width = Inches(3.5)
 
     def _format_value(self, value: Any, field_key: str) -> str:
         """

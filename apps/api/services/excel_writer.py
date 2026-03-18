@@ -14,6 +14,23 @@ from services.template_config import TemplateConfig, get_template_config
 from core.exceptions import TemplateError, ErrorCodes
 
 # Mapeo fijo de celdas → coincide con plantilla 1.xlsx
+_NEGOCIO_CELLS = {
+    "horario_atencion": "B32",
+    "zona_direccion":   "B33",
+    "canal_venta":      "B34",
+    "capacidad_diaria": "B35",
+}
+
+_BUYER_PERSONA_CELLS = {
+    "edad_objetivo":            "B38",
+    "genero_objetivo":          "B39",
+    "ocupacion_principal":      "B40",
+    "zona_residencia_objetivo": "B41",
+    "motivaciones_compra":      "B42",
+    "canal_informacion":        "B43",
+    "nivel_socioeconomico":     "B44",
+}
+
 _PARAM_CELLS = {
     "nombre": "B4",
     "rubro": "B5",
@@ -323,6 +340,8 @@ class ExcelWriter:
         output_path: Path,
         parametros: Dict[str, Any],
         productos: List[Dict[str, Any]],
+        datos_negocio: Optional[Dict[str, Any]] = None,
+        buyer_persona: Optional[Dict[str, Any]] = None,
     ) -> Path:
         """
         Rellena la plantilla Excel existente con los datos del plan.
@@ -362,6 +381,28 @@ class ExcelWriter:
                 for col_key, col_letter in _PRODUCTOS_COLS.items():
                     cell = ws[f"{col_letter}{row}"]
                     cell.value = prod.get(col_key, "")
+                    cell.font = _BLUE_FONT
+                    cell.fill = _YELLOW_FILL
+
+            # Datos del Negocio → filas 32-35
+            if datos_negocio:
+                for field, cell_addr in _NEGOCIO_CELLS.items():
+                    value = datos_negocio.get(field)
+                    if value is None:
+                        continue
+                    cell = ws[cell_addr]
+                    cell.value = value
+                    cell.font = _BLUE_FONT
+                    cell.fill = _YELLOW_FILL
+
+            # Buyer Persona → filas 38-44
+            if buyer_persona:
+                for field, cell_addr in _BUYER_PERSONA_CELLS.items():
+                    value = buyer_persona.get(field)
+                    if value is None:
+                        continue
+                    cell = ws[cell_addr]
+                    cell.value = value
                     cell.font = _BLUE_FONT
                     cell.fill = _YELLOW_FILL
 
