@@ -55,6 +55,7 @@ class Database:
         """
         # Importar modelos para que SQLModel los registre
         from models.db import global_data, plan_data, trazabilidad, survey  # noqa
+        # Sprint 1 new models are in plan_data — already imported above
 
         SQLModel.metadata.create_all(self.engine)
         logger.info("All tables created successfully")

@@ -2,15 +2,16 @@
 Excel Writer - Escribe archivos Excel usando configuración dinámica.
 
 Soporta cualquier versión de plantilla definida en excel_templates.yaml.
+También expone fill_input1_template() para el pipeline Sprint 1.
 """
 
+import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, Alignment, PatternFill
 
-from services.template_config import TemplateConfig, get_template_config
 from core.exceptions import TemplateError, ErrorCodes
 
 # Mapeo fijo de celdas → coincide con plantilla 1.xlsx
@@ -67,14 +68,9 @@ class ExcelWriter:
         )
     """
 
-    def __init__(self, template_config: Optional[TemplateConfig] = None):
-        """
-        Inicializa el escritor.
-
-        Args:
-            template_config: Configuración de plantillas. Si es None, usa la default.
-        """
-        self.config = template_config or get_template_config()
+    def __init__(self):
+        """Inicializa el escritor."""
+        self.config = None  # template_config removed in Sprint 1 cleanup
 
     def write_file(
         self,
@@ -374,3 +370,175 @@ class ExcelWriter:
                 template_name=str(template_path),
                 code=ErrorCodes.EXCEL_WRITE_ERROR,
             )
+
+    def fill_input1_template(
+        self,
+        plan_id: int,
+        plan_data,  # PlanData from models.schemas
+        template_path: Path,
+        output_path: Path,
+    ) -> Path:
+        """
+        Writes enriched PlanData back into a copy of input1_vacio.xlsx.
+
+        Strategy: label-based row lookup in col A → write value in col B.
+        Uses a SEPARATE load_workbook() call (no data_only) so dropdown
+        Data Validation lists are preserved.
+
+        Args:
+            plan_id:       Plan DB id (used for logging only)
+            plan_data:     PlanData Pydantic model from enrichment chain
+            template_path: Path to input1_vacio.xlsx (clean template)
+            output_path:   Destination path for the filled copy
+
+        Returns:
+            output_path
+        """
+        try:
+            # Write pass: NO data_only — preserves dropdowns
+            wb = load_workbook(template_path)
+
+            inicio = wb["INICIO"]
+            config_sheet = wb["CONFIGURACIÓN METODOLÓGICA"]
+
+            # ── 1. Parámetros Globales (INICIO, kv section) ──────────────
+            # NOTE: labels must match col A strings verbatim from input1_vacio.xlsx
+            params = plan_data.parametros
+            param_map = {
+                "Nombre del Proyecto": params.nombre_proyecto,
+                "Rubro / Sector": params.rubro_sector,
+                "Ciudad": params.ciudad,
+                "Departamento": params.departamento,
+                "País": params.pais,
+                "Moneda": params.moneda,
+                "Tipo de Cambio (Bs/USD)": params.tipo_cambio,
+                "Fecha de Elaboración": params.fecha_elaboracion,
+                "Horizonte del Proyecto (años)": params.horizonte_anios,
+                "Nombre del Responsable": params.nombre_responsable,
+                "Año Base (Año 0)": params.anio_base,
+                "Año Inicio Operaciones": params.anio_inicio_operaciones,
+                "N° de Productos/Servicios": params.num_productos_servicios,
+            }
+            self._write_kv_by_label(inicio, param_map)
+
+            # ── 2. Productos / Servicios (INICIO, table section) ──────────
+            self._write_products_by_label(inicio, plan_data.productos)
+
+            # ── 3. Datos del Negocio (INICIO, kv section) ─────────────────
+            # NOTE: labels must match col A strings verbatim from input1_vacio.xlsx
+            dn = plan_data.datos_negocio
+            negocio_map = {
+                "Horario de Atención": dn.horario_atencion,
+                "Días Laborales/Semana": dn.dias_laborales_semana,
+                "Semanas Laborales/Año": dn.semanas_laborales_anio,
+                "Horas Laborales/Día": dn.horas_laborales_dia,
+                "Zona / Dirección": dn.zona_direccion,
+                "Canal de Venta": dn.canal_venta,
+                "Capacidad Diaria (unidades)": dn.capacidad_diaria_unidades,
+                "N° de Socios/Fundadores": dn.num_socios_fundadores,
+            }
+            self._write_kv_by_label(inicio, negocio_map)
+
+            # ── 4. Buyer Persona (INICIO, kv section) ─────────────────────
+            # NOTE: labels must match col A strings verbatim from input1_vacio.xlsx
+            bp = plan_data.buyer_persona
+            buyer_map = {
+                "Edad Objetivo (rango)": bp.edad_objetivo,
+                "Género Objetivo": bp.genero_objetivo,
+                "Ocupación Principal": bp.ocupacion_principal,
+                "Zona de Residencia Objetivo": bp.zona_residencia_objetivo,
+                "Motivaciones de Compra": bp.motivaciones_compra,
+                "Canal de Información Preferido": bp.canal_informacion_preferido,
+                "Nivel Socioeconómico (NSE)": bp.nivel_socioeconomico,
+                "Problema que Resuelve": bp.problema_que_resuelve,
+            }
+            self._write_kv_by_label(inicio, buyer_map)
+
+            # ── 5. Configuración Metodológica (separate sheet, kv) ────────
+            # NOTE: labels must match col A strings verbatim from input1_vacio.xlsx
+            cm = plan_data.config_metodologica
+            config_map = {
+                "Precisión de los resultados": cm.precision_muestra,
+                "Tipo de mercado": cm.tipo_mercado,
+                "Método de proyección": cm.metodo_proyeccion_ventas,
+                "Cómo evolucionarán los precios": cm.evolucion_precios,
+                "Método de depreciación": cm.metodo_depreciacion,
+                "Dinero para operar": cm.meses_capital_trabajo,
+                "¿Necesitás financiamiento externo?": cm.necesita_financiamiento,
+                "Forma de pago": cm.forma_pago,
+                "Frecuencia de pago": cm.frecuencia_pago,
+            }
+            self._write_kv_by_label(config_sheet, config_map)
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            wb.save(output_path)
+            return output_path
+
+        except TemplateError:
+            raise
+        except Exception as e:
+            raise TemplateError(
+                message=f"Error al rellenar Input 1 template: {str(e)}",
+                template_name=str(template_path),
+                code=ErrorCodes.EXCEL_WRITE_ERROR,
+            )
+
+    # ── Private helpers for fill_input1_template ──────────────────────────
+
+    def _write_kv_by_label(
+        self, sheet: Worksheet, label_value_map: Dict[str, Any]
+    ) -> None:
+        """
+        Scans col A for each label in label_value_map and writes the
+        corresponding value into col B of the same row.
+
+        Labels that are not found in col A are silently skipped.
+        None values are also skipped (leave template cell as-is).
+        """
+        for row in sheet.iter_rows(min_col=1, max_col=1):
+            cell = row[0]
+            raw = cell.value
+            if raw is None:
+                continue
+            label = str(raw).strip()
+            if label in label_value_map:
+                value = label_value_map[label]
+                if value is not None:
+                    target = sheet.cell(row=cell.row, column=2)
+                    # Skip MergedCell non-master cells (read-only in openpyxl)
+                    from openpyxl.cell.cell import MergedCell
+                    if not isinstance(target, MergedCell):
+                        target.value = value
+
+    def _write_products_by_label(
+        self, sheet: Worksheet, productos: list
+    ) -> None:
+        """
+        Locates the PRODUCTOS / SERVICIOS section header in col A,
+        then writes each ProductoData row below it (col A=numero,
+        col B=nombre, col C=tipo, col D=unidad_medida, col E=precio_bs).
+
+        Writes only as many rows as there are productos — existing
+        blank rows below are left intact.
+        """
+        anchor = "PRODUCTOS / SERVICIOS"
+        header_row: Optional[int] = None
+
+        for row in sheet.iter_rows(min_col=1, max_col=1):
+            cell = row[0]
+            if cell.value and str(cell.value).strip() == anchor:
+                # data rows start 2 below: anchor + header row
+                header_row = cell.row + 1
+                break
+
+        if header_row is None or not productos:
+            return
+
+        data_start = header_row + 1
+        for idx, prod in enumerate(productos):
+            r = data_start + idx
+            sheet.cell(row=r, column=1).value = prod.numero
+            sheet.cell(row=r, column=2).value = prod.nombre
+            sheet.cell(row=r, column=3).value = prod.tipo
+            sheet.cell(row=r, column=4).value = prod.unidad_medida
+            sheet.cell(row=r, column=5).value = prod.precio_bs

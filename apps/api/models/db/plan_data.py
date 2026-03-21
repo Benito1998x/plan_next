@@ -39,6 +39,9 @@ class Plan(SQLModel, table=True):
     parametros: Optional["ParametrosGlobales"] = Relationship(back_populates="plan")
     productos: List["Producto"] = Relationship(back_populates="plan")
     versiones: List["VersionPlan"] = Relationship(back_populates="plan")
+    datos_negocio: Optional["DatosNegocio"] = Relationship(back_populates="plan")
+    buyer_persona: Optional["BuyerPersona"] = Relationship(back_populates="plan")
+    config_metodologica: Optional["ConfiguracionMetodologica"] = Relationship(back_populates="plan")
 
 
 class ParametrosGlobales(SQLModel, table=True):
@@ -123,3 +126,100 @@ class VersionPlan(SQLModel, table=True):
 
     # Relación
     plan: Optional[Plan] = Relationship(back_populates="versiones")
+
+
+class DatosNegocio(SQLModel, table=True):
+    """
+    Datos operativos del negocio: horario, canal de venta, capacidad, socios.
+
+    Relación 1:1 con Plan. Todos los campos de contenido son opcionales
+    para facilitar la experimentación en Sprint 1.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="plan.id", unique=True)
+
+    # Operación
+    horario_atencion: Optional[str] = Field(default=None)          # "9:00 - 21:00"
+    dias_laborales_semana: Optional[int] = Field(default=None)     # 5, 6 o 7
+    semanas_laborales_anio: Optional[int] = Field(default=50)
+    horas_laborales_dia: Optional[int] = Field(default=8)
+
+    # Ubicación y canal
+    zona_direccion: Optional[str] = Field(default=None)
+    canal_venta: Optional[str] = Field(default=None)               # "Físico", "Online", "Ambos"
+
+    # Capacidad y socios
+    capacidad_diaria_unidades: Optional[int] = Field(default=None)
+    num_socios_fundadores: Optional[int] = Field(default=None)     # min 1
+
+    # Control
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relación
+    plan: Optional[Plan] = Relationship(back_populates="datos_negocio")
+
+
+class BuyerPersona(SQLModel, table=True):
+    """
+    Perfil del comprador objetivo para el plan de negocio.
+
+    Relación 1:1 con Plan. Todos los campos de contenido son opcionales.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="plan.id", unique=True)
+
+    # Demografía
+    edad_objetivo: Optional[str] = Field(default=None)             # "18-35 años"
+    genero_objetivo: Optional[str] = Field(default=None)           # "Ambos", "Masculino", "Femenino"
+    ocupacion_principal: Optional[str] = Field(default=None)
+    zona_residencia_objetivo: Optional[str] = Field(default=None)
+
+    # Psicografía
+    motivaciones_compra: Optional[str] = Field(default=None)
+    canal_informacion_preferido: Optional[str] = Field(default=None)  # "Instagram", etc.
+    nivel_socioeconomico: Optional[str] = Field(default=None)      # "A", "B", "C", "D", "E"
+    problema_que_resuelve: Optional[str] = Field(default=None)
+
+    # Control
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relación
+    plan: Optional[Plan] = Relationship(back_populates="buyer_persona")
+
+
+class ConfiguracionMetodologica(SQLModel, table=True):
+    """
+    Configuración metodológica del plan: proyección, financiamiento, pagos.
+
+    Relación 1:1 con Plan. datos_adicionales almacena campos de desbordamiento
+    como JSON para evitar sobre-normalización en etapa de experimentación.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="plan.id", unique=True)
+
+    # Metodología
+    precision_muestra: Optional[str] = Field(default=None)         # "95% confianza, 5% margen de error"
+    tipo_mercado: Optional[str] = Field(default=None)              # "Mediano", "Grande", "Pequeño"
+    metodo_proyeccion_ventas: Optional[str] = Field(default=None)
+    evolucion_precios: Optional[str] = Field(default=None)
+    metodo_depreciacion: Optional[str] = Field(default=None)       # "Línea recta"
+
+    # Financiamiento
+    meses_capital_trabajo: Optional[int] = Field(default=2)
+    necesita_financiamiento: Optional[str] = Field(default=None)   # "Sí, con banco", "No", etc.
+
+    # Pagos
+    forma_pago: Optional[str] = Field(default=None)
+    frecuencia_pago: Optional[str] = Field(default=None)
+
+    # Desbordamiento: campos adicionales de las 5 subsecciones como JSON
+    datos_adicionales: Optional[str] = Field(default=None)
+
+    # Control
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relación
+    plan: Optional[Plan] = Relationship(back_populates="config_metodologica")

@@ -10,6 +10,77 @@ from datetime import datetime
 
 
 # ============================================================
+# PLAN DATA SCHEMAS (Input 1 pipeline — Sprint 1)
+# ============================================================
+
+
+class ProductoData(BaseModel):
+    numero: int
+    nombre: str
+    tipo: Optional[str] = None          # "Producto" or "Servicio"
+    unidad_medida: Optional[str] = None
+    precio_bs: Optional[float] = None
+
+
+class ParametrosData(BaseModel):
+    nombre_proyecto: str
+    rubro_sector: Optional[str] = None
+    ciudad: Optional[str] = None
+    departamento: Optional[str] = None
+    pais: str = "Bolivia"
+    moneda: str = "Bs"
+    tipo_cambio: Optional[float] = None
+    fecha_elaboracion: Optional[str] = None
+    horizonte_anios: Optional[int] = None
+    nombre_responsable: Optional[str] = None
+    anio_base: Optional[int] = None
+    anio_inicio_operaciones: Optional[int] = None
+    num_productos_servicios: Optional[int] = None
+
+
+class DatosNegocioData(BaseModel):
+    horario_atencion: Optional[str] = None
+    dias_laborales_semana: Optional[int] = None
+    semanas_laborales_anio: Optional[int] = 50
+    horas_laborales_dia: Optional[int] = 8
+    zona_direccion: Optional[str] = None
+    canal_venta: Optional[str] = None
+    capacidad_diaria_unidades: Optional[int] = None
+    num_socios_fundadores: Optional[int] = None
+
+
+class BuyerPersonaData(BaseModel):
+    edad_objetivo: Optional[str] = None
+    genero_objetivo: Optional[str] = None
+    ocupacion_principal: Optional[str] = None
+    zona_residencia_objetivo: Optional[str] = None
+    motivaciones_compra: Optional[str] = None
+    canal_informacion_preferido: Optional[str] = None
+    nivel_socioeconomico: Optional[str] = None
+    problema_que_resuelve: Optional[str] = None
+
+
+class ConfigMetodologicaData(BaseModel):
+    precision_muestra: Optional[str] = None
+    tipo_mercado: Optional[str] = None
+    metodo_proyeccion_ventas: Optional[str] = None
+    evolucion_precios: Optional[str] = None
+    metodo_depreciacion: Optional[str] = None
+    meses_capital_trabajo: Optional[int] = 2
+    necesita_financiamiento: Optional[str] = None
+    forma_pago: Optional[str] = None
+    frecuencia_pago: Optional[str] = None
+
+
+class PlanData(BaseModel):
+    parametros: ParametrosData
+    productos: List[ProductoData] = []
+    datos_negocio: DatosNegocioData = DatosNegocioData()
+    buyer_persona: BuyerPersonaData = BuyerPersonaData()
+    config_metodologica: ConfigMetodologicaData = ConfigMetodologicaData()
+
+
+# ============================================================
 # REQUEST SCHEMAS
 # ============================================================
 

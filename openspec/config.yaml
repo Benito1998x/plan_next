@@ -1,0 +1,45 @@
+schema: spec-driven
+
+context: |
+  Project: BPAE (Business Plan Automation Engine) — Bolivia market
+  Stack: Python 3.11 · FastAPI · LangChain · SQLModel · SQLite · OpenAI API · python-docx · openpyxl · pandas
+  Architecture: Clean separation — api/v1 (endpoints) · services/ (business logic) · models/db/ (SQLModel tables) · pipeline/ (Bronze→Silver→Gold)
+  Testing: pytest · FastAPI TestClient · tests/ at project root · apps/api/tests/
+  Style: no linter config detected (ruff/black not in requirements.txt — use PEP8)
+  DB: SQLite at apps/api/data/plan.db · ORM: SQLModel · Tables: Plan, ParametrosGlobales, Producto, Survey, SurveyResponse, Auditoria, LogProcesamiento (+ DatosNegocio, BuyerPersona, ConfiguracionMetodologica pending Sprint 1)
+  Sprints: S1=LangChain Excel Agent · S2=Survey Designer · S3=Tabulation Pipeline
+  Token tracking: LangSmith (LANGCHAIN_TRACING_V2=true) + LogProcesamiento table
+  Input: Input 1.xlsx (sheets: INICIO, CONFIGURACIÓN METODOLÓGICA) — read by label (col A), not cell position
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules in apps/api/ (api/v1, services, models/db, pipeline)
+    - Reference Sprint context (S1/S2/S3) to scope impact
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Cover both happy path and error handling (FastAPI HTTPException patterns)
+  design:
+    - Include sequence diagrams for complex flows (especially LangChain agent flows)
+    - Document architecture decisions with rationale
+    - Reference existing patterns in services/ before introducing new ones
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+    - One task at a time — no bulk implementation without checkpoints
+  apply:
+    - Follow existing code patterns (SQLModel, FastAPI router structure)
+    - Load relevant project skills (bpae-context, bpae-fastapi, bpae-excel, bpae-word)
+    - Read existing code BEFORE writing new code
+    - STOP and confirm with user after each task
+    tdd: false
+    test_command: "pytest tests/"
+  verify:
+    test_command: "pytest tests/"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas (large removals)
+    - Update CLAUDE.md tables section when DB schema changes

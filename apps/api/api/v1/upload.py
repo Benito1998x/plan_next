@@ -8,13 +8,16 @@ Flujo principal:
 4. Se rellena plantilla Word con los datos completos
 5. Se devuelven URLs de descarga
 
-POST /api/v1/upload-excel   → sube Excel del cliente (legacy)
-POST /api/v1/process-plan   → recibe JSON parcial del cliente (nuevo)
+POST /api/v1/upload-excel         → sube Excel del cliente (legacy)
+POST /api/v1/process-plan         → recibe JSON parcial del cliente (legacy)
 GET  /api/v1/download/{plan_id}/{file_type}
+GET  /api/v1/template/input1      → descarga plantilla vacía Input 1.xlsx (Sprint 1)
+POST /api/v1/upload/plan          → pipeline híbrido LangChain completo (Sprint 1)
 """
 
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,10 +25,8 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Body
 from fastapi.responses import FileResponse
 
 from models.schemas import APIResponse, ExtractedData
-from services.excel_reader import ExcelReader
 from services.excel_writer import ExcelWriter
 from services.word_service import WordService
-from services.table_detector import TableDetector
 from services.ai_agent import get_ai_agent
 from database import get_database
 from core.exceptions import ValidationError, ProcessingError
@@ -35,15 +36,18 @@ from core import ErrorCodes
 router = APIRouter(prefix="/api/v1", tags=["upload"])
 
 validator = FileValidator()
-reader = ExcelReader()
 writer = ExcelWriter()
 word_service = WordService()
-detector = TableDetector()
 
 # Rutas a las plantillas maestras
 _PLANTILLAS_DIR = Path(__file__).parent.parent.parent.parent.parent / "plantillas"
 EXCEL_TEMPLATE = _PLANTILLAS_DIR / "excel" / "plantilla 1.xlsx"
 WORD_TEMPLATE = _PLANTILLAS_DIR / "word" / "plantilla 1.docx"
+
+# Sprint 1 — Input 1.xlsx pipeline paths
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
+INPUT1_TEMPLATE = _PROJECT_ROOT / "data" / "sprint1" / "templates" / "input1_vacio.xlsx"
+INPUT1_OUTPUTS_DIR = _PROJECT_ROOT / "data" / "sprint1" / "outputs"
 
 
 def _get_temp_dir() -> Path:
@@ -393,3 +397,327 @@ def _validate_required_fields(data: ExtractedData) -> list:
     if not data.productos:
         errors.append("No se encontraron productos")
     return errors
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SPRINT 1 — Input 1.xlsx Pipeline Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _save_plan_to_database(plan_data) -> int:
+    """
+    Persists a PlanData instance to all DB tables.
+
+    Creates: Plan, ParametrosGlobales, Producto × N,
+             DatosNegocio, BuyerPersona, ConfiguracionMetodologica.
+
+    Returns the new plan.id.
+    Raises sqlalchemy.exc.IntegrityError on constraint violation.
+    """
+    import json
+    from models.db import (
+        Plan,
+        ParametrosGlobales,
+        Producto,
+        DatosNegocio,
+        BuyerPersona,
+        ConfiguracionMetodologica,
+        EstadoPlan,
+    )
+
+    db = get_database()
+    params = plan_data.parametros
+    dn = plan_data.datos_negocio
+    bp = plan_data.buyer_persona
+    cm = plan_data.config_metodologica
+
+    with db.get_session() as session:
+        # ── Plan ──────────────────────────────────────────────────────────
+        plan = Plan(
+            nombre=params.nombre_proyecto or "Sin nombre",
+            rubro=params.rubro_sector or "Sin rubro",
+            ciudad=params.ciudad or "Sin ciudad",
+            departamento=params.departamento or "Sin departamento",
+            estado=EstadoPlan.BORRADOR,
+        )
+        session.add(plan)
+        session.commit()
+        session.refresh(plan)
+        plan_id = plan.id
+
+        # ── ParametrosGlobales ────────────────────────────────────────────
+        pg = ParametrosGlobales(
+            plan_id=plan_id,
+            pais=params.pais or "Bolivia",
+            moneda_codigo=params.moneda or "Bs",
+            tipo_cambio_usd=float(params.tipo_cambio or 6.96),
+            tasa_inflacion_anual=2.0,
+            horizonte_anios=int(params.horizonte_anios or 5),
+            anio_base=int(params.anio_base or 2025),
+            anio_inicio_operaciones=int(params.anio_inicio_operaciones or 2026),
+            impuesto_iue=25.0,
+            impuesto_it=3.0,
+        )
+        session.add(pg)
+
+        # ── Productos ──────────────────────────────────────────────────────
+        for prod in plan_data.productos:
+            session.add(
+                Producto(
+                    plan_id=plan_id,
+                    numero=prod.numero,
+                    nombre=prod.nombre,
+                    unidad_medida=prod.unidad_medida or "Unidad",
+                    peso_volumen=float(prod.precio_bs or 0.0),
+                )
+            )
+
+        # ── DatosNegocio ───────────────────────────────────────────────────
+        session.add(
+            DatosNegocio(
+                plan_id=plan_id,
+                horario_atencion=dn.horario_atencion,
+                dias_laborales_semana=dn.dias_laborales_semana,
+                semanas_laborales_anio=dn.semanas_laborales_anio,
+                horas_laborales_dia=dn.horas_laborales_dia,
+                zona_direccion=dn.zona_direccion,
+                canal_venta=dn.canal_venta,
+                capacidad_diaria_unidades=dn.capacidad_diaria_unidades,
+                num_socios_fundadores=dn.num_socios_fundadores,
+            )
+        )
+
+        # ── BuyerPersona ───────────────────────────────────────────────────
+        session.add(
+            BuyerPersona(
+                plan_id=plan_id,
+                edad_objetivo=bp.edad_objetivo,
+                genero_objetivo=bp.genero_objetivo,
+                ocupacion_principal=bp.ocupacion_principal,
+                zona_residencia_objetivo=bp.zona_residencia_objetivo,
+                motivaciones_compra=bp.motivaciones_compra,
+                canal_informacion_preferido=bp.canal_informacion_preferido,
+                nivel_socioeconomico=bp.nivel_socioeconomico,
+                problema_que_resuelve=bp.problema_que_resuelve,
+            )
+        )
+
+        # ── ConfiguracionMetodologica ──────────────────────────────────────
+        # All named fields are mapped directly; datos_adicionales stays NULL
+        # at this stage (no overflow fields from PlanData schema).
+        session.add(
+            ConfiguracionMetodologica(
+                plan_id=plan_id,
+                precision_muestra=cm.precision_muestra,
+                tipo_mercado=cm.tipo_mercado,
+                metodo_proyeccion_ventas=cm.metodo_proyeccion_ventas,
+                evolucion_precios=cm.evolucion_precios,
+                metodo_depreciacion=cm.metodo_depreciacion,
+                meses_capital_trabajo=cm.meses_capital_trabajo,
+                necesita_financiamiento=cm.necesita_financiamiento,
+                forma_pago=cm.forma_pago,
+                frecuencia_pago=cm.frecuencia_pago,
+                datos_adicionales=None,
+            )
+        )
+
+        session.commit()
+        return plan_id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SPRINT 1 — GET /template/input1
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/template/input1",
+    summary="Descargar plantilla vacía Input 1.xlsx",
+    description="Sirve la plantilla de Input 1.xlsx vacía para que el usuario la complete.",
+    tags=["sprint1"],
+)
+async def get_input1_template():
+    """
+    Returns Input 1.xlsx as a file download attachment.
+
+    - 200: xlsx file with correct Content-Type header
+    - 404: template file not found on disk
+    """
+    if not INPUT1_TEMPLATE.exists():
+        raise HTTPException(status_code=404, detail="Template not found")
+    return FileResponse(
+        path=str(INPUT1_TEMPLATE),
+        filename="Input_1_Plan_Negocio.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SPRINT 1 — POST /upload/plan
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/upload/plan",
+    summary="Subir Input 1.xlsx y generar plan completo (Sprint 1 pipeline)",
+    description=(
+        "Recibe Input 1.xlsx rellenado, corre el pipeline híbrido: "
+        "validate → read → LangChain enrich → save DB → fill output xlsx → log tokens."
+    ),
+    tags=["sprint1"],
+)
+async def upload_plan(file: UploadFile = File(...)):
+    """
+    Full pipeline:
+    1. Validate file (.xlsx only, size limit)
+    2. Save to temp dir
+    3. Input1Reader.read() → raw_dict
+    4. Input1EnrichmentChain.enrich() → PlanData + token_info
+    5. _save_plan_to_database() → plan_id
+    6. ExcelWriter.fill_input1_template() → output xlsx
+    7. LogProcesamiento insert (success or failure)
+    8. Return 200 JSON with plan_id, sections_extracted, token data, excel_url
+    """
+    from services.input1_reader import Input1Reader
+    from services.langchain_chain import Input1EnrichmentChain
+    from models.db import LogProcesamiento
+
+    start_time = datetime.utcnow()
+    plan_id: Optional[int] = None
+
+    # ── 1. Validate ────────────────────────────────────────────────────────
+    try:
+        await validator.validate_upload(file, {".xlsx"})
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # ── 2. Save temp file ──────────────────────────────────────────────────
+    temp_dir = _get_temp_dir()
+    safe_name = Path(file.filename or "upload.xlsx").name
+    temp_path = temp_dir / safe_name
+    content = await file.read()
+    temp_path.write_bytes(content)
+
+    db = get_database()
+
+    try:
+        # ── 3. Read Excel ──────────────────────────────────────────────────
+        reader = Input1Reader(temp_path)
+        raw_dict = reader.read()
+
+        # ── 4. LangChain enrichment ────────────────────────────────────────
+        chain = Input1EnrichmentChain()
+        plan_data, token_info = chain.enrich(raw_dict)
+
+        # ── 5. Persist to DB ───────────────────────────────────────────────
+        plan_id = _save_plan_to_database(plan_data)
+
+        # ── 6. Fill output Excel ───────────────────────────────────────────
+        INPUT1_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = INPUT1_OUTPUTS_DIR / f"{plan_id}_output.xlsx"
+        writer.fill_input1_template(
+            plan_id=plan_id,
+            plan_data=plan_data,
+            template_path=INPUT1_TEMPLATE,
+            output_path=output_path,
+        )
+
+        # ── 7. Log success ─────────────────────────────────────────────────
+        fin = datetime.utcnow()
+        with db.get_session() as session:
+            session.add(
+                LogProcesamiento(
+                    plan_id=plan_id,
+                    archivo_entrada=file.filename or safe_name,
+                    archivo_salida_excel=str(output_path),
+                    estado="completado",
+                    actividad="input1_enrichment",
+                    tokens_prompt=token_info["tokens_prompt"],
+                    tokens_completion=token_info["tokens_completion"],
+                    costo_usd=token_info["costo_usd"],
+                    inicio=start_time,
+                    fin=fin,
+                    duracion_segundos=(fin - start_time).total_seconds(),
+                )
+            )
+            session.commit()
+
+        # ── 8. Respond ─────────────────────────────────────────────────────
+        sections_extracted = [
+            "parametros_globales",
+            "productos_servicios",
+            "datos_negocio",
+            "buyer_persona",
+            "configuracion_metodologica",
+        ]
+        return {
+            "plan_id": plan_id,
+            "nombre": plan_data.parametros.nombre_proyecto,
+            "sections_extracted": sections_extracted,
+            "tokens_prompt": token_info["tokens_prompt"],
+            "tokens_completion": token_info["tokens_completion"],
+            "costo_usd": token_info["costo_usd"],
+            "excel_url": f"/api/v1/download/plan/{plan_id}/excel",
+            "word_url": None,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        # ── Error: log FAILED entry ────────────────────────────────────────
+        fin = datetime.utcnow()
+        try:
+            with db.get_session() as session:
+                session.add(
+                    LogProcesamiento(
+                        plan_id=plan_id,
+                        archivo_entrada=file.filename or safe_name,
+                        estado="error",
+                        actividad="input1_enrichment",
+                        mensaje_error=str(exc)[:500],
+                        tokens_prompt=None,
+                        tokens_completion=None,
+                        costo_usd=None,
+                        inicio=start_time,
+                        fin=fin,
+                        duracion_segundos=(fin - start_time).total_seconds(),
+                    )
+                )
+                session.commit()
+        except Exception:
+            pass  # Don't mask original error with a logging failure
+
+        raise HTTPException(
+            status_code=500, detail=f"Processing error: {str(exc)}"
+        )
+
+    finally:
+        # Clean up temp file
+        try:
+            if temp_path.exists():
+                os.remove(temp_path)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SPRINT 1 — Download output Excel
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/download/plan/{plan_id}/excel",
+    summary="Descargar Excel de salida generado por Sprint 1 pipeline",
+    tags=["sprint1"],
+)
+async def download_plan_excel(plan_id: int):
+    """Returns the filled Input 1 Excel for the given plan_id."""
+    output_path = INPUT1_OUTPUTS_DIR / f"{plan_id}_output.xlsx"
+    if not output_path.exists():
+        raise HTTPException(status_code=404, detail="Output file not found")
+    return FileResponse(
+        path=str(output_path),
+        filename=f"Plan_{plan_id}_Input1.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

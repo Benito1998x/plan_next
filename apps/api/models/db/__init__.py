@@ -3,8 +3,17 @@ Modelos de base de datos SQLModel.
 """
 
 from .global_data import Moneda, Impuesto, Ciudad, TipoCambio, IndicadorEconomico
-from .plan_data import Plan, ParametrosGlobales, Producto, VersionPlan, EstadoPlan
-from .trazabilidad import Auditoria, LogProcesamiento, TipoCambio
+from .plan_data import (
+    Plan,
+    ParametrosGlobales,
+    Producto,
+    VersionPlan,
+    EstadoPlan,
+    DatosNegocio,
+    BuyerPersona,
+    ConfiguracionMetodologica,
+)
+from .trazabilidad import Auditoria, LogProcesamiento, TipoCambio as TipoCambioEnum
 from .survey import Survey, SurveyResponse, SurveyVariable
 
 __all__ = [
@@ -20,9 +29,14 @@ __all__ = [
     "Producto",
     "VersionPlan",
     "EstadoPlan",
+    # Datos específicos del plan (Sprint 1)
+    "DatosNegocio",
+    "BuyerPersona",
+    "ConfiguracionMetodologica",
     # Trazabilidad
     "Auditoria",
     "LogProcesamiento",
+    "TipoCambioEnum",
     # Encuestas (Sprint 2)
     "Survey",
     "SurveyResponse",

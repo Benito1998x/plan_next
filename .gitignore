@@ -42,6 +42,10 @@ env/
 *.db
 *.sqlite3
 apps/api/data/*.db
+apps/api/data/*.db.*
+
+# Sprint 1 generated outputs (keep fixtures and templates)
+data/sprint1/outputs/*.xlsx
 
 # Logs
 *.log

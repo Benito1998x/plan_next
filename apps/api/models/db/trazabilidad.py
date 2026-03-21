@@ -72,3 +72,9 @@ class LogProcesamiento(SQLModel, table=True):
 
     # Duración en segundos
     duracion_segundos: Optional[float] = Field(default=None)
+
+    # Token tracking (Sprint 1 — LangChain pipeline)
+    tokens_prompt: Optional[int] = Field(default=None)
+    tokens_completion: Optional[int] = Field(default=None)
+    costo_usd: Optional[float] = Field(default=None)
+    actividad: Optional[str] = Field(default=None)  # "scan_excel"|"enrich_chain"|"generate_output"
