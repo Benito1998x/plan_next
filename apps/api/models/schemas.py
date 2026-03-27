@@ -21,6 +21,27 @@ class UploadExcelRequest(BaseModel):
     version: str = Field(default="v1", description="Versión de plantilla")
 
 
+class DatosNegocioInput(BaseModel):
+    """Input para datos operativos del negocio."""
+
+    horario_atencion: Optional[str] = Field(None, description="Horario de atención (ej: 09:00 - 22:00)")
+    zona_direccion: Optional[str] = Field(None, description="Zona o dirección del negocio")
+    canal_venta: Optional[str] = Field(None, description="Canal de venta (Presencial, Delivery, etc.)")
+    capacidad_diaria: Optional[int] = Field(None, description="Capacidad diaria en unidades")
+
+
+class BuyerPersonaInput(BaseModel):
+    """Input para el perfil del cliente objetivo."""
+
+    edad_objetivo: Optional[str] = Field(None, description="Rango de edad objetivo (ej: 18 - 35 años)")
+    genero_objetivo: Optional[str] = Field(None, description="Género objetivo")
+    ocupacion_principal: Optional[str] = Field(None, description="Ocupación principal del cliente objetivo")
+    zona_residencia_objetivo: Optional[str] = Field(None, description="Zona de residencia del cliente objetivo")
+    motivaciones_compra: Optional[str] = Field(None, description="Motivaciones de compra (Precio, Sabor, etc.)")
+    canal_informacion: Optional[str] = Field(None, description="Canal de información preferido")
+    nivel_socioeconomico: Optional[str] = Field(None, description="Nivel socioeconómico (NSE)")
+
+
 class ParametrosGlobalesInput(BaseModel):
     """Input para parámetros globales."""
 
@@ -59,6 +80,12 @@ class PlanCreateRequest(BaseModel):
     productos: List[ProductoInput] = Field(
         default_factory=list, description="Lista de productos"
     )
+    datos_negocio: Optional[DatosNegocioInput] = Field(
+        None, description="Datos operativos del negocio"
+    )
+    buyer_persona: Optional[BuyerPersonaInput] = Field(
+        None, description="Perfil del cliente objetivo"
+    )
 
 
 # ============================================================
@@ -72,6 +99,27 @@ class APIResponse(BaseModel):
     data: Optional[Any] = Field(None, description="Datos de respuesta")
     error: Optional[str] = Field(None, description="Código de error si aplica")
     message: Optional[str] = Field(None, description="Mensaje descriptivo")
+
+
+class DatosNegocioOutput(BaseModel):
+    """Output para datos operativos del negocio."""
+
+    horario_atencion: Optional[str] = None
+    zona_direccion: Optional[str] = None
+    canal_venta: Optional[str] = None
+    capacidad_diaria: Optional[int] = None
+
+
+class BuyerPersonaOutput(BaseModel):
+    """Output para el perfil del cliente objetivo."""
+
+    edad_objetivo: Optional[str] = None
+    genero_objetivo: Optional[str] = None
+    ocupacion_principal: Optional[str] = None
+    zona_residencia_objetivo: Optional[str] = None
+    motivaciones_compra: Optional[str] = None
+    canal_informacion: Optional[str] = None
+    nivel_socioeconomico: Optional[str] = None
 
 
 class ParametrosGlobalesOutput(BaseModel):
@@ -111,6 +159,8 @@ class PlanOutput(BaseModel):
     estado: str
     parametros: Optional[ParametrosGlobalesOutput] = None
     productos: List[ProductoOutput] = []
+    datos_negocio: Optional[DatosNegocioOutput] = None
+    buyer_persona: Optional[BuyerPersonaOutput] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -124,6 +174,12 @@ class UploadExcelResponse(BaseModel):
         ..., description="Parámetros extraídos"
     )
     productos: List[ProductoOutput] = Field(..., description="Productos extraídos")
+    datos_negocio: Optional[DatosNegocioOutput] = Field(
+        None, description="Datos del negocio extraídos"
+    )
+    buyer_persona: Optional[BuyerPersonaOutput] = Field(
+        None, description="Buyer persona extraída"
+    )
     campos_faltantes: List[str] = Field(
         default_factory=list, description="Campos que faltan"
     )
@@ -174,6 +230,12 @@ class ExtractedData(BaseModel):
 
     parametros_globales: Dict[str, Any] = Field(default_factory=dict)
     productos: List[Dict[str, Any]] = Field(default_factory=list)
+    datos_negocio: Dict[str, Any] = Field(
+        default_factory=dict, description="Datos operativos del negocio"
+    )
+    buyer_persona: Dict[str, Any] = Field(
+        default_factory=dict, description="Perfil del cliente objetivo"
+    )
     sections_found: List[str] = Field(
         default_factory=list, description="Secciones detectadas"
     )

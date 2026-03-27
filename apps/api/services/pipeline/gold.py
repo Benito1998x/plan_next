@@ -86,7 +86,11 @@ def load_gold_variables(survey_id: int) -> Dict[int, str]:
     with db.get_session() as session:
         stmt = select(SurveyVariable).where(SurveyVariable.survey_id == survey_id)
         variables = session.exec(stmt).all()
-    return {v.pregunta_num: v.nombre_variable for v in variables}
+    return {
+        v.pregunta_num: v.nombre_variable
+        for v in variables
+        if not v.nombre_variable.startswith("__bi__:")
+    }
 
 
 # ── helpers ────────────────────────────────────────────────────────────────

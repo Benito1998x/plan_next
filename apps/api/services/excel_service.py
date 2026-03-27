@@ -19,6 +19,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from database import get_database
 from models.db import Plan, ParametrosGlobales, Producto, EstadoPlan
+from models.db.plan_data import DatosNegocio, BuyerPersona
 from services.config_service import get_config_service
 from core.exceptions import ValidationError, ProcessingError, TemplateError, ErrorCodes
 
@@ -62,6 +63,25 @@ class ExcelService:
         "nombre": "B",  # Nombre del Producto
         "unidad": "C",  # Unidad de Medida
         "peso": "D",  # Peso/Vol por Unidad
+    }
+
+    # Datos del Negocio (columna B, filas 32-35)
+    CELDAS_DATOS_NEGOCIO = {
+        "horario_atencion": "B32",   # Horario de Atención
+        "zona_direccion":   "B33",   # Zona / Dirección
+        "canal_venta":      "B34",   # Canal de Venta
+        "capacidad_diaria": "B35",   # Capacidad Diaria (unidades)
+    }
+
+    # Buyer Persona (columna B, filas 38-44)
+    CELDAS_BUYER_PERSONA = {
+        "edad_objetivo":            "B38",  # Edad Objetivo (rango)
+        "genero_objetivo":          "B39",  # Género Objetivo
+        "ocupacion_principal":      "B40",  # Ocupación Principal
+        "zona_residencia_objetivo": "B41",  # Zona de Residencia Objetivo
+        "motivaciones_compra":      "B42",  # Motivaciones de Compra
+        "canal_informacion":        "B43",  # Canal de Información Preferido
+        "nivel_socioeconomico":     "B44",  # Nivel Socioeconómico (NSE)
     }
 
     # Campos obligatorios (mínimo para crear plan)
@@ -129,13 +149,22 @@ class ExcelService:
         # Paso 5: Extraer productos
         productos = self._extraer_productos(ws)
 
-        # Paso 6: Validar campos obligatorios
+        # Paso 6: Extraer datos del negocio y buyer persona
+        datos_negocio = self._extraer_seccion(ws, self.CELDAS_DATOS_NEGOCIO, ["capacidad_diaria"])
+        buyer_persona = self._extraer_seccion(ws, self.CELDAS_BUYER_PERSONA, [])
+
+        # Paso 7: Validar campos obligatorios
         self._validar_campos_obligatorios(parametros)
 
-        # Paso 7: Cerrar el libro
+        # Paso 8: Cerrar el libro
         wb.close()
 
-        return {"parametros_globales": parametros, "productos": productos}
+        return {
+            "parametros_globales": parametros,
+            "productos": productos,
+            "datos_negocio": datos_negocio,
+            "buyer_persona": buyer_persona,
+        }
 
     def _extraer_parametros(self, ws: Worksheet) -> Dict[str, Any]:
         """
@@ -194,6 +223,38 @@ class ExcelService:
 
         return productos
 
+    def _extraer_seccion(
+        self,
+        ws: Worksheet,
+        celdas: Dict[str, str],
+        campos_entero: list,
+    ) -> Dict[str, Any]:
+        """
+        Extrae datos de una sección de celdas arbitraria.
+
+        Args:
+            ws: Worksheet de openpyxl
+            celdas: Mapeo {campo: celda} a leer
+            campos_entero: Lista de campos a convertir a int
+
+        Returns:
+            Dict con los valores extraídos (solo los no-None)
+        """
+        datos = {}
+        for campo, celda in celdas.items():
+            valor = ws[celda].value
+            if valor is None:
+                datos[campo] = None
+                continue
+            if campo in campos_entero:
+                try:
+                    datos[campo] = int(valor)
+                except (ValueError, TypeError):
+                    datos[campo] = None
+            else:
+                datos[campo] = str(valor).strip() if valor is not None else None
+        return datos
+
     def _validar_campos_obligatorios(self, parametros: Dict[str, Any]) -> None:
         """
         Valida que los campos obligatorios estén presentes.
@@ -235,6 +296,8 @@ class ExcelService:
         """
         parametros = datos["parametros_globales"]
         productos = datos["productos"]
+        datos_negocio_raw = datos.get("datos_negocio", {}) or {}
+        buyer_persona_raw = datos.get("buyer_persona", {}) or {}
 
         with self.db.get_session() as session:
             # Crear Plan
@@ -300,6 +363,31 @@ class ExcelService:
                 )
                 session.add(producto)
 
+            # Crear Datos del Negocio
+            if any(v for v in datos_negocio_raw.values() if v is not None):
+                datos_negocio_bd = DatosNegocio(
+                    plan_id=plan.id,
+                    horario_atencion=datos_negocio_raw.get("horario_atencion"),
+                    zona_direccion=datos_negocio_raw.get("zona_direccion"),
+                    canal_venta=datos_negocio_raw.get("canal_venta"),
+                    capacidad_diaria=datos_negocio_raw.get("capacidad_diaria"),
+                )
+                session.add(datos_negocio_bd)
+
+            # Crear Buyer Persona
+            if any(v for v in buyer_persona_raw.values() if v is not None):
+                buyer_persona_bd = BuyerPersona(
+                    plan_id=plan.id,
+                    edad_objetivo=buyer_persona_raw.get("edad_objetivo"),
+                    genero_objetivo=buyer_persona_raw.get("genero_objetivo"),
+                    ocupacion_principal=buyer_persona_raw.get("ocupacion_principal"),
+                    zona_residencia_objetivo=buyer_persona_raw.get("zona_residencia_objetivo"),
+                    motivaciones_compra=buyer_persona_raw.get("motivaciones_compra"),
+                    canal_informacion=buyer_persona_raw.get("canal_informacion"),
+                    nivel_socioeconomico=buyer_persona_raw.get("nivel_socioeconomico"),
+                )
+                session.add(buyer_persona_bd)
+
             session.commit()
 
             return plan
@@ -310,6 +398,8 @@ class ExcelService:
         parametros: ParametrosGlobales,
         productos: List[Producto],
         output_path: Path,
+        datos_negocio=None,
+        buyer_persona=None,
     ) -> Path:
         """
         Genera la plantilla Excel maestra con todos los datos.
@@ -383,6 +473,37 @@ class ExcelService:
                 ws[f"B{fila}"] = prod.nombre
                 ws[f"C{fila}"] = prod.unidad_medida
                 ws[f"D{fila}"] = prod.peso_volumen
+
+            # ============================================
+            # ESCRIBIR DATOS DEL NEGOCIO (filas 31-35)
+            # ============================================
+            ws["A31"] = "DATOS DEL NEGOCIO"
+            negocio_data = [
+                ("Horario de Atención",        "B32", getattr(datos_negocio, "horario_atencion", None)),
+                ("Zona / Dirección",            "B33", getattr(datos_negocio, "zona_direccion", None)),
+                ("Canal de Venta",              "B34", getattr(datos_negocio, "canal_venta", None)),
+                ("Capacidad Diaria (unidades)", "B35", getattr(datos_negocio, "capacidad_diaria", None)),
+            ]
+            for i, (etiqueta, celda, valor) in enumerate(negocio_data):
+                ws[f"A{32 + i}"] = etiqueta
+                ws[celda] = valor
+
+            # ============================================
+            # ESCRIBIR BUYER PERSONA (filas 37-44)
+            # ============================================
+            ws["A37"] = "BUYER PERSONA / SEGMENTACIÓN"
+            persona_data = [
+                ("Edad Objetivo (rango)",          "B38", getattr(buyer_persona, "edad_objetivo", None)),
+                ("Género Objetivo",                 "B39", getattr(buyer_persona, "genero_objetivo", None)),
+                ("Ocupación Principal",             "B40", getattr(buyer_persona, "ocupacion_principal", None)),
+                ("Zona de Residencia Objetivo",    "B41", getattr(buyer_persona, "zona_residencia_objetivo", None)),
+                ("Motivaciones de Compra",          "B42", getattr(buyer_persona, "motivaciones_compra", None)),
+                ("Canal de Información Preferido", "B43", getattr(buyer_persona, "canal_informacion", None)),
+                ("Nivel Socioeconómico (NSE)",     "B44", getattr(buyer_persona, "nivel_socioeconomico", None)),
+            ]
+            for i, (etiqueta, celda, valor) in enumerate(persona_data):
+                ws[f"A{38 + i}"] = etiqueta
+                ws[celda] = valor
 
             # Guardar archivo
             wb.save(output_path)

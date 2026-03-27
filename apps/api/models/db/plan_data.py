@@ -39,6 +39,8 @@ class Plan(SQLModel, table=True):
     parametros: Optional["ParametrosGlobales"] = Relationship(back_populates="plan")
     productos: List["Producto"] = Relationship(back_populates="plan")
     versiones: List["VersionPlan"] = Relationship(back_populates="plan")
+    datos_negocio: Optional["DatosNegocio"] = Relationship(back_populates="plan")
+    buyer_persona: Optional["BuyerPersona"] = Relationship(back_populates="plan")
 
 
 class ParametrosGlobales(SQLModel, table=True):
@@ -100,6 +102,49 @@ class Producto(SQLModel, table=True):
 
     # Relación
     plan: Optional[Plan] = Relationship(back_populates="productos")
+
+
+class DatosNegocio(SQLModel, table=True):
+    """
+    Datos operativos del negocio para contextualizar el plan.
+
+    Captura horario, zona y canal de venta que alimentan los indicadores.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="plan.id", unique=True)
+
+    horario_atencion: Optional[str] = Field(default=None)   # "09:00 - 22:00"
+    zona_direccion: Optional[str] = Field(default=None)      # "Equipetrol, Santa Cruz"
+    canal_venta: Optional[str] = Field(default=None)         # "Presencial, Delivery"
+    capacidad_diaria: Optional[int] = Field(default=None)    # unidades/día
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    plan: Optional["Plan"] = Relationship(back_populates="datos_negocio")
+
+
+class BuyerPersona(SQLModel, table=True):
+    """
+    Segmentación y perfil del cliente objetivo del plan.
+
+    Incluye demografía, psicografía y comportamiento de compra.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="plan.id", unique=True)
+
+    edad_objetivo: Optional[str] = Field(default=None)              # "18 - 35 años"
+    genero_objetivo: Optional[str] = Field(default=None)            # "Ambos / Femenino"
+    ocupacion_principal: Optional[str] = Field(default=None)        # "Estudiantes, Jóvenes Profesionales"
+    zona_residencia_objetivo: Optional[str] = Field(default=None)   # "Equipetrol, Plan 3000"
+    motivaciones_compra: Optional[str] = Field(default=None)        # "Precio, Sabor, Rapidez"
+    canal_informacion: Optional[str] = Field(default=None)          # "Instagram, TikTok"
+    nivel_socioeconomico: Optional[str] = Field(default=None)       # "Medio - Medio Alto"
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    plan: Optional["Plan"] = Relationship(back_populates="buyer_persona")
 
 
 class VersionPlan(SQLModel, table=True):
